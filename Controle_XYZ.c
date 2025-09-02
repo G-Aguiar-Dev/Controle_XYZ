@@ -7,6 +7,10 @@
 
 #include "lib/ssd1306.h"        // Biblioteca de display OLED
 #include "lib/font.h"           // Biblioteca de fontes
+#include "lib/HTML.h"           // Biblioteca para geração de HTML
+
+#include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
+#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulação de TCP/IP
 
 #include "FreeRTOS.h"           // Biblioteca de FreeRTOS
 #include "task.h"               // Biblioteca de tasks
@@ -17,19 +21,45 @@
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
+#define WIFI_SSID "XXXXXXXX"                    // Nome da rede Wi-Fi
+#define WIFI_PASS "XXXXXXXXX"                   // Senha da rede Wi-Fi
+
+struct http_state                               // Struct para manter o estado da conexão HTTP
+{
+    char response[4096];
+    size_t len;
+    size_t sent;
+    size_t offset; // bytes já enfileirados para envio
+};
+
 //---------------------------------------FUNÇÕES---------------------------------------
 
+// Função para enviar o próximo pedaço de resposta se houver espaço na janela
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
 
+// Função de callback para enviar dados HTTP
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
 
+// Função de callback para receber dados HTTP
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
 
+// Função de callback para aceitar conexões
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
 
+// Função para iniciar o servidor HTTP
 static void start_http_server(void);
 
 //----------------------------------------TASKS----------------------------------------
+
+// Task de polling para manter a conexão Wi-Fi ativa
+void vPollingTask(void *pvParameters)
+{
+    while (true)
+    {
+        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexão ativa
+        vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
+    }
+}
 
 //----------------------------------------MAIN-----------------------------------------
 
@@ -37,6 +67,35 @@ int main()
 {
     stdio_init_all();
 
+    sleep_ms(4000);               // Aguarda 4 segundos para inicialização
+
+    if (cyw43_arch_init())          // Inicializa o Wi-fi
+    {
+        printf("Falha ao inicializar o módulo Wi-Fi\n");
+        return 1;
+    }
+
+    cyw43_arch_enable_sta_mode();   // Habilita o modo Station do Wi-Fi
+
+    // Verifica se o Wi-Fi está conectado
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000))
+    {
+        printf("Falha ao conectar ao Wi-Fi\n");
+        return 1;
+    }
+
+    // Variáveis para armazenar o endereço IP
+    uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
+    char ip_str[24];
+    snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
+    printf("Conectado ao Wi-Fi %s\n", WIFI_SSID);   // Exibe o nome da rede Wi-Fi
+    printf("Endereço IP: %s\n", ip_str);            // Exibe o endereço IP
+
+    start_http_server();                            // Inicia o servidor HTTP
+
+    // Tasks
+    xTaskCreate(vPollingTask, "Polling Task", 256, NULL, 1, NULL);
     vTaskStartScheduler();
     panic_unsupported();
 }
@@ -126,14 +185,13 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
 
     else
     {
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-                           "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/html\r\n"
-                           "Content-Length: %d\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           (int)strlen(HTML_BODY), HTML_BODY);
+        preencher_html();
+        
+        hs->len = strlen(html);
+        if (hs->len >= sizeof(hs->response)) {
+            hs->len = sizeof(hs->response) - 1;
+        }
+        memcpy(hs->response, html, hs->len);
     }
 
     tcp_arg(tpcb, hs);
