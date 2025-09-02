@@ -24,11 +24,14 @@ include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_i
 project(Controle_XYZ C CXX ASM)
 pico_sdk_init()
 
-include_directories(${CMAKE_SOURCE_DIR}/lib)
+include_directories(${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/lib
+    ${PICO_SDK_PATH})
 
 add_executable(${PROJECT_NAME}  
         Controle_XYZ.c 
         lib/ssd1306.c # Biblioteca para o display OLED
+        lib/HTML.c    # Biblioteca para HTML
         )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR})
@@ -39,6 +42,8 @@ target_link_libraries(${PROJECT_NAME}
         hardware_i2c
         hardware_adc
         hardware_pwm
+        pico_cyw43_arch_lwip_threadsafe_background
+        pico_lwip_mbedtls
         FreeRTOS-Kernel 
         FreeRTOS-Kernel-Heap4
         )
