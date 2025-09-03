@@ -21,8 +21,8 @@
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
-#define WIFI_SSID "XXXXXXXX"                    // Nome da rede Wi-Fi
-#define WIFI_PASS "XXXXXXXXX"                   // Senha da rede Wi-Fi
+#define WIFI_SSID ""                    // Nome da rede Wi-Fi
+#define WIFI_PASS ""                   // Senha da rede Wi-Fi
 
 struct http_state                               // Struct para manter o estado da conexão HTTP
 {
