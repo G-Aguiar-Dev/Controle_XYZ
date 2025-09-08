@@ -4,10 +4,13 @@
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
 #include "hardware/pwm.h"       // Biblioteca de PWM
-
+#include "hardware/pio.h"
 #include "lib/ssd1306.h"        // Biblioteca de display OLED
 #include "lib/font.h"           // Biblioteca de fontes
 #include "lib/HTML.h"           // Biblioteca para geração de HTML
+#include "hardware/clocks.h"
+// Inclui arquivo PIO para matriz LED
+#include "pio_matrix.pio.h"
 
 #include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
 #include "lwip/tcp.h"           // Biblioteca de LWIP para manipulação de TCP/IP
@@ -21,16 +24,27 @@
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
-#define WIFI_SSID "XXXXXXXX"                    // Nome da rede Wi-Fi
-#define WIFI_PASS "XXXXXXXXX"                   // Senha da rede Wi-Fi
+#define WIFI_SSID "Tijuipe"                    // Nome da rede Wi-Fi
+#define WIFI_PASS "ahgyyuuUdm"                   // Senha da rede Wi-Fi
+
+// Configurações da matriz WS2812
+#define LED_PIN 7
+#define NUM_PIXELS 25
+#define MATRIZ_LARGURA 5
+#define MATRIZ_ALTURA 5
 
 struct http_state                               // Struct para manter o estado da conexão HTTP
 {
-    char response[4096];
+    char response[32768]; // 32KB - tamanho para HTML completo
     size_t len;
     size_t sent;
     size_t offset; // bytes já enfileirados para envio
 };
+
+// Variáveis da matriz LED
+static uint32_t matriz_leds[NUM_PIXELS];
+PIO pio = pio0;
+uint sm;
 
 //---------------------------------------FUNÇÕES---------------------------------------
 
@@ -48,6 +62,17 @@ static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
 
 // Função para iniciar o servidor HTTP
 static void start_http_server(void);
+
+// Função para extrair parâmetros da URL
+static void extract_url_parameters(char *request);
+
+// Funções da matriz LED
+static int coordenada_para_indice(int x, int y);
+static void atualiza_matriz(void);
+static void acende_led_matriz(int x, int y, uint32_t cor);
+static void apaga_led_matriz(int x, int y);
+static void inicializa_matriz_led(void);
+static int converte_posicao_para_coordenadas(char *posicao, int *x, int *y);
 
 //----------------------------------------TASKS----------------------------------------
 
@@ -92,6 +117,7 @@ int main()
     printf("Conectado ao Wi-Fi %s\n", WIFI_SSID);   // Exibe o nome da rede Wi-Fi
     printf("Endereço IP: %s\n", ip_str);            // Exibe o endereço IP
 
+    inicializa_matriz_led();                        // Inicializa matriz LED
     start_http_server();                            // Inicia o servidor HTTP
 
     // Tasks
@@ -152,6 +178,10 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     tcp_recved(tpcb, p->tot_len);
 
     char *req = (char *)p->payload;
+    
+    // Extrai parâmetros da URL e mostra na serial
+    extract_url_parameters(req);
+    
     struct http_state *hs = malloc(sizeof(struct http_state));
     if (!hs)
     {
@@ -228,4 +258,137 @@ static void start_http_server(void)
     pcb = tcp_listen(pcb);
     tcp_accept(pcb, connection_callback);
     printf("Servidor HTTP rodando na porta 80...\n");
+}
+
+// Função para extrair parâmetros da URL
+static void extract_url_parameters(char *request)
+{
+    char *slot_param = strstr(request, "slot=");
+    char *position_param = strstr(request, "position=");
+    
+    if (slot_param)
+    {
+        slot_param += 5; // Pula "slot="
+        char slot_value[10];
+        int i = 0;
+        while (*slot_param && *slot_param != '&' && *slot_param != ' ' && *slot_param != '\r' && *slot_param != '\n' && i < 9)
+        {
+            slot_value[i++] = *slot_param++;
+        }
+        slot_value[i] = '\0';
+        printf("Pallet clicado - Slot: %s\n", slot_value);
+        
+        // Acende LED da posição do slot
+        int x, y;
+        if (converte_posicao_para_coordenadas(slot_value, &x, &y)) {
+            uint32_t cor = 0x00FF00; // Verde para slot
+            acende_led_matriz(x, y, cor);
+            printf("LED acendido na posição (%d,%d) - Slot: %s\n", x, y, slot_value);
+        }
+    }
+    
+    if (position_param)
+    {
+        position_param += 9; // Pula "position="
+        char position_value[10];
+        int i = 0;
+        while (*position_param && *position_param != '&' && *position_param != ' ' && *position_param != '\r' && *position_param != '\n' && i < 9)
+        {
+            position_value[i++] = *position_param++;
+        }
+        position_value[i] = '\0';
+        printf("Pallet clicado - Position: %s\n", position_value);
+        
+        // Apaga LED da posição
+        int x, y;
+        if (converte_posicao_para_coordenadas(position_value, &x, &y)) {
+            apaga_led_matriz(x, y);
+            printf("LED apagado na posição (%d,%d) - Position: %s\n", x, y, position_value);
+        }
+    }
+}
+
+// Funções da matriz LED
+
+// Converte coordenada (x,y) para índice do LED no array
+static int coordenada_para_indice(int x, int y) {
+    if (x < 0 || x >= MATRIZ_LARGURA || y < 0 || y >= MATRIZ_ALTURA) {
+        return -1; 
+    }
+
+    if (y % 2 == 0) {
+        // linhas pares: esquerda -> direita
+        return y * MATRIZ_LARGURA + x;
+    } else {
+        // linhas ímpares: direita -> esquerda
+        return y * MATRIZ_LARGURA + (MATRIZ_LARGURA - 1 - x);
+    }
+}
+
+// Envia buffer completo para a matriz
+static void atualiza_matriz(void) {
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        // WS2812 usa formato GRB (shift p/ alinhar com protocolo)
+        uint32_t cor = matriz_leds[i];
+        pio_sm_put_blocking(pio, sm, cor << 8u);
+    }
+}
+
+// Acende LED em (x,y) com uma cor RGB
+static void acende_led_matriz(int x, int y, uint32_t cor) {
+    int idx = coordenada_para_indice(x, y);
+    if (idx >= 0) {
+        matriz_leds[idx] = cor;
+        atualiza_matriz();
+    }
+}
+
+// Apaga LED em (x,y)
+static void apaga_led_matriz(int x, int y) {
+    int idx = coordenada_para_indice(x, y);
+    if (idx >= 0) {
+        matriz_leds[idx] = 0x000000; // preto
+        atualiza_matriz();
+    }
+}
+
+// Inicializa a matriz LED
+static void inicializa_matriz_led(void) {
+    // Inicializa PIO para WS2812
+    uint offset = pio_add_program(pio, &pio_matrix_program);
+    sm = pio_claim_unused_sm(pio, true);
+    pio_matrix_program_init(pio, sm, offset, LED_PIN);
+
+    // Limpa a matriz no início
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        matriz_leds[i] = 0x000000;
+    }
+    atualiza_matriz();
+    
+    printf("Matriz LED 5x5 inicializada no pino %d\n", LED_PIN);
+}
+
+// Converte posição (ex: A1, B3) para coordenadas (x,y)
+static int converte_posicao_para_coordenadas(char *posicao, int *x, int *y) {
+    if (strlen(posicao) < 2) {
+        *x = -1;
+        *y = -1;
+        return 0;
+    }
+    
+    // Converte letra para coordenada Y (A=0, B=1, C=2, D=3)
+    char letra = toupper(posicao[0]);
+    *y = letra - 'A';
+    
+    // Converte número para coordenada X (1=0, 2=1, 3=2, 4=3, 5=4)
+    *x = posicao[1] - '1';
+    
+    // Verifica se as coordenadas são válidas
+    if (*x < 0 || *x >= MATRIZ_LARGURA || *y < 0 || *y >= MATRIZ_ALTURA) {
+        *x = -1;
+        *y = -1;
+        return 0;
+    }
+    
+    return 1; // Sucesso
 }

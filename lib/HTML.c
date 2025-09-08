@@ -3,9 +3,9 @@
 #include <stdlib.h>
 
 // Cria a resposta HTML em um buffer maior
-char html[8192];
+char html[32768]; // 32KB - tamanho para HTML completo
 
-extern char html[8192];
+extern char html[32768];
 
 // Preenche o array html com o conteúdo do painel de controle do armazém
 void preencher_html() {
@@ -21,29 +21,10 @@ void preencher_html() {
         "    <title>Painel de Controle - Armazém XYZ</title>\n"
         "    \n"
         "    <style>\n"
-        "        :root {\n"
-        "            --cor-primaria: #005A9C;\n"
-        "            --cor-fundo: #f4f7f9;\n"
-        "            --cor-painel: #ffffff;\n"
-        "            --cor-texto: #333333;\n"
-        "            --cor-sucesso: #28a745;\n"
-        "            --cor-aviso: #ffc107;\n"
-        "            --cor-borda: #dee2e6;\n"
-        "            --sombra-suave: 0 4px 8px rgba(0,0,0,0.05);\n"
-        "        }\n"
+        "        :root{--cor-primaria:#005A9C;--cor-fundo:#f4f7f9;--cor-painel:#ffffff;--cor-texto:#333333;--cor-sucesso:#28a745;--cor-aviso:#ffc107;--cor-borda:#dee2e6;--sombra-suave:0 4px 8px rgba(0,0,0,0.05)}\n"
         "\n"
-        "        * {\n"
-        "            margin: 0;\n"
-        "            padding: 0;\n"
-        "            box-sizing: border-box;\n"
-        "        }\n"
-        "\n"
-        "        body {\n"
-        "            font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif;\n"
-        "            background-color: var(--cor-fundo);\n"
-        "            color: var(--cor-texto);\n"
-        "            line-height: 1.6;\n"
-        "        }\n"
+        "        *{margin:0;padding:0;box-sizing:border-box}\n"
+        "        body{font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif;background-color:var(--cor-fundo);color:var(--cor-texto);line-height:1.6}\n"
         "\n"
         "        .main-header, .main-footer {\n"
         "            background-color: var(--cor-primaria);\n"
