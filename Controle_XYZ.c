@@ -19,6 +19,9 @@
 #include "task.h"               // Biblioteca de tasks
 
 #include <stdio.h>              // Biblioteca de entrada e saída padrão
+#include <stdlib.h>             // Biblioteca padrão
+#include <string.h>             // Biblioteca de strings
+#include <ctype.h>              // Biblioteca de caracteres
 
 //-----------------------------------------HTML----------------------------------------
 
@@ -33,6 +36,10 @@
 #define MATRIZ_LARGURA 5
 #define MATRIZ_ALTURA 5
 
+// Configurações do eletroímã
+#define ELECTROMAGNET_PIN 13
+#define ELECTROMAGNET_LED_PIN 13  // LED no mesmo pino do eletroímã
+
 struct http_state                               // Struct para manter o estado da conexão HTTP
 {
     char response[32768]; // 32KB - tamanho para HTML completo
@@ -45,6 +52,9 @@ struct http_state                               // Struct para manter o estado d
 static uint32_t matriz_leds[NUM_PIXELS];
 PIO pio = pio0;
 uint sm;
+
+// Variáveis do eletroímã
+static bool electromagnet_active = false;
 
 //---------------------------------------FUNÇÕES---------------------------------------
 
@@ -73,6 +83,12 @@ static void acende_led_matriz(int x, int y, uint32_t cor);
 static void apaga_led_matriz(int x, int y);
 static void inicializa_matriz_led(void);
 static int converte_posicao_para_coordenadas(char *posicao, int *x, int *y);
+
+// Funções do eletroímã
+static void inicializa_eletroima(void);
+static void ativar_eletroima(void);
+static void desativar_eletroima(void);
+static void toggle_eletroima(void);
 
 //----------------------------------------TASKS----------------------------------------
 
@@ -118,6 +134,7 @@ int main()
     printf("Endereço IP: %s\n", ip_str);            // Exibe o endereço IP
 
     inicializa_matriz_led();                        // Inicializa matriz LED
+    inicializa_eletroima();                         // Inicializa eletroímã
     start_http_server();                            // Inicia o servidor HTTP
 
     // Tasks
@@ -212,6 +229,29 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         pbuf_free(p);
         return ERR_OK;
     }
+    
+    // Endpoint JSON para /electromagnet-status
+    if (strstr(req, "GET /electromagnet-status"))
+    {
+        char json[128];
+        int jsonlen = snprintf(json, sizeof(json),
+            "{\"active\":%s,\"status\":\"%s\"}",
+            electromagnet_active ? "true" : "false",
+            electromagnet_active ? "Ativado" : "Desativado");
+        hs->len = snprintf(hs->response, sizeof(hs->response),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "%s",
+            jsonlen, json);
+        tcp_arg(tpcb, hs);
+        tcp_sent(tpcb, http_sent);
+        send_next_chunk(tpcb, hs);
+        pbuf_free(p);
+        return ERR_OK;
+    }
 
     else
     {
@@ -265,6 +305,7 @@ static void extract_url_parameters(char *request)
 {
     char *slot_param = strstr(request, "slot=");
     char *position_param = strstr(request, "position=");
+    char *electromagnet_param = strstr(request, "electromagnet=");
     
     if (slot_param)
     {
@@ -304,6 +345,23 @@ static void extract_url_parameters(char *request)
         if (converte_posicao_para_coordenadas(position_value, &x, &y)) {
             apaga_led_matriz(x, y);
             printf("LED apagado na posição (%d,%d) - Position: %s\n", x, y, position_value);
+        }
+    }
+    
+    if (electromagnet_param)
+    {
+        electromagnet_param += 14; // Pula "electromagnet="
+        char electromagnet_value[10];
+        int i = 0;
+        while (*electromagnet_param && *electromagnet_param != '&' && *electromagnet_param != ' ' && *electromagnet_param != '\r' && *electromagnet_param != '\n' && i < 9)
+        {
+            electromagnet_value[i++] = *electromagnet_param++;
+        }
+        electromagnet_value[i] = '\0';
+        
+        if (strcmp(electromagnet_value, "toggle") == 0) {
+            toggle_eletroima();
+            printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
         }
     }
 }
@@ -391,4 +449,38 @@ static int converte_posicao_para_coordenadas(char *posicao, int *x, int *y) {
     }
     
     return 1; // Sucesso
+}
+
+// Funções do eletroímã
+
+// Inicializa o eletroímã
+static void inicializa_eletroima(void) {
+    gpio_init(ELECTROMAGNET_PIN);
+    gpio_set_dir(ELECTROMAGNET_PIN, GPIO_OUT);
+    gpio_put(ELECTROMAGNET_PIN, 0); // Inicia desativado
+    electromagnet_active = false;
+    printf("Eletroímã inicializado no pino %d\n", ELECTROMAGNET_PIN);
+}
+
+// Ativa o eletroímã
+static void ativar_eletroima(void) {
+    gpio_put(ELECTROMAGNET_PIN, 1);
+    electromagnet_active = true;
+    printf("Eletroímã ativado\n");
+}
+
+// Desativa o eletroímã
+static void desativar_eletroima(void) {
+    gpio_put(ELECTROMAGNET_PIN, 0);
+    electromagnet_active = false;
+    printf("Eletroímã desativado\n");
+}
+
+// Alterna o estado do eletroímã
+static void toggle_eletroima(void) {
+    if (electromagnet_active) {
+        desativar_eletroima();
+    } else {
+        ativar_eletroima();
+    }
 }
