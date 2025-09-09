@@ -27,8 +27,8 @@
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
-#define WIFI_SSID "Tijuipe"                    // Nome da rede Wi-Fi
-#define WIFI_PASS "ahgyyuuUdm"                   // Senha da rede Wi-Fi
+#define WIFI_SSID ""                    // Nome da rede Wi-Fi
+#define WIFI_PASS ""                   // Senha da rede Wi-Fi
 
 // Configurações da matriz WS2812
 #define LED_PIN 7
