@@ -396,6 +396,7 @@ void preencher_html() {
         "        <p>Interface de Controle v1.0 - Status do Sistema: <span id=\"system-status\">Online</span></p>\n"
         "    </footer>\n"
         "\n"
+<<<<<<< HEAD
         "    <script>\n"
         "        let currentSlot = null;\n"
         "\n"
@@ -444,6 +445,10 @@ void preencher_html() {
         "                .catch(error => console.error('Erro ao atualizar dados:', error));\n"
         "        }\n"
         "\n"
+=======
+        "    <script>\n"     
+        "        let historyLog = [];\n"
+>>>>>>> 992e206 (Funcionalidades de responsividade funcionando novamente. Junto com o histórico.)
         "        document.addEventListener('DOMContentLoaded', function() {\n"
         "            // Atualizar a cada 2 segundos\n"
         "            setInterval(updateDashboard, 2000);\n"
@@ -474,6 +479,7 @@ void preencher_html() {
         "                });\n"
         "            });\n"
         "\n"
+<<<<<<< HEAD
         "           // TRECHO ALTERADO: USANDO FETCH API PARA A REQUISIÇÃO DE RETIRADA\n"
         "           confirmButton.addEventListener('click', function() {\n"
         "               if (currentSlot) {\n"
@@ -496,6 +502,16 @@ void preencher_html() {
         "               currentSlot = null;\n"
         "           });\n"
         "           // FIM DO TRECHO ALTERADO\n"
+=======
+        "            confirmButton.addEventListener('click', function() {\n"
+        "                if (currentSlot) {\n"
+        "                    const url = new URL(window.location);\n"
+        "                    url.searchParams.set('slot', currentSlot);\n"
+        "                    window.location.href = url.toString();\n"
+        "                }\n"
+        "                popupOverlay.style.display = 'none';\n"
+        "            });\n"
+>>>>>>> 992e206 (Funcionalidades de responsividade funcionando novamente. Junto com o histórico.)
         "\n"
         "            cancelButton.addEventListener('click', function() {\n"
         "                popupOverlay.style.display = 'none';\n"
