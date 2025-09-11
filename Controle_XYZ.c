@@ -27,8 +27,8 @@
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
-#define WIFI_SSID "Tijuipe"                    // Nome da rede Wi-Fi
-#define WIFI_PASS "ahgyyuuUdm"                   // Senha da rede Wi-Fi
+#define WIFI_SSID ""                    // Nome da rede Wi-Fi
+#define WIFI_PASS ""                   // Senha da rede Wi-Fi
 
 // Configurações da matriz WS2812
 #define LED_PIN 7
@@ -196,7 +196,6 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
 
     char *req = (char *)p->payload;
     
-    // Extrai parâmetros da URL e mostra na serial
     extract_url_parameters(req);
     
     struct http_state *hs = malloc(sizeof(struct http_state));
@@ -249,6 +248,27 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         tcp_arg(tpcb, hs);
         tcp_sent(tpcb, http_sent);
         send_next_chunk(tpcb, hs);
+        pbuf_free(p);
+        return ERR_OK;
+    }
+
+    if (strstr(req, "POST /toggle-electromagnet")) 
+    {
+        // Executa a função que liga/desliga o LED
+        toggle_eletroima();
+        
+        // Prepara uma resposta simples de sucesso (200 OK)
+        hs->len = snprintf(hs->response, sizeof(hs->response),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 0\r\n"
+            "Connection: close\r\n"
+            "\r\n");
+
+        // Envia a resposta de volta para o navegador
+        tcp_arg(tpcb, hs);
+        tcp_sent(tpcb, http_sent);
+        send_next_chunk(tpcb, hs);
+        
         pbuf_free(p);
         return ERR_OK;
     }

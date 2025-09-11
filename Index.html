@@ -6,29 +6,9 @@
     <title>Painel de Controle - Armazém XYZ</title>
     
     <style>
-        :root {
-            --cor-primaria: #005A9C;
-            --cor-fundo: #f4f7f9;
-            --cor-painel: #ffffff;
-            --cor-texto: #333333;
-            --cor-sucesso: #28a745;
-            --cor-aviso: #ffc107;
-            --cor-borda: #dee2e6;
-            --sombra-suave: 0 4px 8px rgba(0,0,0,0.05);
-        }
+        :root{--cor-primaria:#005A9C;--cor-fundo:#f4f7f9;--cor-painel:#ffffff;--cor-texto:#333333;--cor-sucesso:#28a745;--cor-aviso:#ffc107;--cor-borda:#dee2e6;--sombra-suave:0 4px 8px rgba(0,0,0,0.05)}
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: var(--cor-fundo);
-            color: var(--cor-texto);
-            line-height: 1.6;
-        }
+        *{margin:0;padding:0;box-sizing:border-box}
 
         .main-header, .main-footer {
             background-color: var(--cor-primaria);
@@ -70,6 +50,13 @@
             font-size: 1.1rem;
             border-bottom: 1px solid var(--cor-borda);
             padding-bottom: 0.5rem;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--cor-fundo);
+            color: var(--cor-texto);
+            line-height: 1.6;
         }
 
         .warehouse-layout {
@@ -290,26 +277,26 @@
                     </div>
 
                     <div class="rack-container">
-                        <div class="rack-cell occupied" data-position="D1">D1</div>
-                        <div class="rack-cell" data-position="D2">D2</div>
-                        <div class="rack-cell" data-position="D3">D3</div>
-                        <div class="rack-cell occupied" data-position="D4">D4</div>
-                        <div class="rack-cell" data-position="D5">D5</div>
-                        <div class="rack-cell" data-position="C1">C1</div>
-                        <div class="rack-cell occupied" data-position="C2">C2</div>
-                        <div class="rack-cell" data-position="C3">C3</div>
-                        <div class="rack-cell" data-position="C4">C4</div>
-                        <div class="rack-cell" data-position="C5">C5</div>
-                        <div class="rack-cell" data-position="B1">B1</div>
-                        <div class="rack-cell" data-position="B2">B2</div>
-                        <div class="rack-cell occupied" data-position="B3">B3</div>
-                        <div class="rack-cell" data-position="B4">B4</div>
-                        <div class="rack-cell" data-position="B5">B5</div>
                         <div class="rack-cell occupied" data-position="A1">A1</div>
                         <div class="rack-cell" data-position="A2">A2</div>
                         <div class="rack-cell" data-position="A3">A3</div>
                         <div class="rack-cell occupied" data-position="A4">A4</div>
                         <div class="rack-cell" data-position="A5">A5</div>
+                        <div class="rack-cell" data-position="B1">B1</div>
+                        <div class="rack-cell occupied" data-position="B2">B2</div>
+                        <div class="rack-cell" data-position="B3">B3</div>
+                        <div class="rack-cell" data-position="B4">B4</div>
+                        <div class="rack-cell" data-position="B5">B5</div>
+                        <div class="rack-cell" data-position="C1">C1</div>
+                        <div class="rack-cell" data-position="C2">C2</div>
+                        <div class="rack-cell occupied" data-position="C3">C3</div>
+                        <div class="rack-cell" data-position="C4">C4</div>
+                        <div class="rack-cell" data-position="C5">C5</div>
+                        <div class="rack-cell occupied" data-position="D1">D1</div>
+                        <div class="rack-cell" data-position="D2">D2</div>
+                        <div class="rack-cell" data-position="D3">D3</div>
+                        <div class="rack-cell occupied" data-position="D4">D4</div>
+                        <div class="rack-cell" data-position="D5">D5</div>
                     </div>
                     
                     <div id="exit-conveyor" class="conveyor">
@@ -376,9 +363,6 @@
                     <button type="submit">Filtrar</button>
                 </form>
                 <div id="log-container">
-                    <p>15:00:12 - Pallet XYZ-789 retirado da posição D2.</p>
-                    <p>14:58:34 - Mecanismo movido para X:150 Y:300 Z:50.</p>
-                    <p>14:55:01 - Pallet ABC-123 armazenado na posição A5.</p>
                 </div>
             </section>
         </div>
@@ -401,14 +385,30 @@
     </footer>
 
     <script>
+        // Variáveis globais
+        let historyLog = [];
+        let electromagnetActive = false;
+
         document.addEventListener('DOMContentLoaded', function() {
             const rackCells = document.querySelectorAll('.rack-cell');
             const popupOverlay = document.getElementById('popup-overlay');
             const popupPosition = document.getElementById('popup-position');
             const confirmButton = document.getElementById('confirm-remove');
             const cancelButton = document.getElementById('cancel-remove');
+            const electromagnetBtn = document.getElementById('electromagnet-toggle-btn');
+            const electromagnetStatus = document.getElementById('electromagnet-status');
             let currentSlot = null;
 
+            // Formulários
+            const storeForm = document.getElementById('store-form');
+            const retrieveForm = document.getElementById('retrieve-form');
+            const moveForm = document.getElementById('move-form');
+            const filterForm = document.getElementById('history-filter-form');
+
+            // Inicializar o histórico com as entradas de exemplo
+            initializeHistory();
+
+            // Event listeners para os botões/cliques
             rackCells.forEach(cell => {
                 cell.addEventListener('click', function() {
                     if (this.classList.contains('occupied')) {
@@ -421,11 +421,11 @@
 
             confirmButton.addEventListener('click', function() {
                 if (currentSlot) {
-                    const url = new URL(window.location);
-                    url.searchParams.set('slot', currentSlot);
-                    window.location.href = url.toString();
+                    addToHistory(`Pallet retirado da posição ${currentSlot}.`);
+                    // Aqui você adicionaria a lógica real de remoção
+                    popupOverlay.style.display = 'none';
+                    currentSlot = null;
                 }
-                popupOverlay.style.display = 'none';
             });
 
             cancelButton.addEventListener('click', function() {
@@ -439,6 +439,89 @@
                     currentSlot = null;
                 }
             });
+
+            // Formulário de armazenamento
+            storeForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                addToHistory("Pallet armazenado da esteira de entrada.");
+                // Aqui você adicionaria a lógica real de armazenamento
+            });
+
+            // Formulário de retirada
+            retrieveForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const positionInput = document.getElementById('pallet-position-input');
+                const position = positionInput.value.trim().toUpperCase();
+                
+                if (position) {
+                    addToHistory(`Pallet retirado da posição ${position}.`);
+                    positionInput.value = ''; // Limpa o campo
+                }
+                // Aqui você adicionaria a lógica real de retirada
+            });
+
+            // Formulário de movimento
+            moveForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const x = document.getElementById('coord-x').value;
+                const y = document.getElementById('coord-y').value;
+                const z = document.getElementById('coord-z').value;
+                
+                addToHistory(`Mecanismo movido para X:${x} Y:${y} Z:${z}.`);
+                // Aqui você adicionaria a lógica real de movimento
+            });
+
+            // Botão do eletroímã
+            electromagnetBtn.addEventListener('click', function() {
+                electromagnetActive = !electromagnetActive;
+                electromagnetStatus.textContent = electromagnetActive ? 'Ativado' : 'Desativado';
+                electromagnetBtn.textContent = electromagnetActive ? 'Desativar Eletroímã' : 'Ativar Eletroímã';
+                
+                addToHistory(`Eletroímã ${electromagnetActive ? 'ativado' : 'desativado'}.`);
+                // Aqui você adicionaria a lógica real do eletroímã
+            });
+
+            // Formulário de filtro (apenas para demonstração)
+            filterForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const filterDate = document.getElementById('filter-date').value;
+                
+                if (filterDate) {
+                    addToHistory(`Filtro aplicado para a data: ${filterDate}.`);
+                    // Aqui você implementaria a lógica real de filtro
+                }
+            });
+
+            // Função para inicializar o histórico com entradas de exemplo
+            function initializeHistory() {
+                // Limpa o histórico atual
+                historyLog = [];
+            }
+
+            // Função para adicionar uma entrada ao histórico
+            function addToHistory(message, customTime = null) {
+                const now = new Date();
+                const time = customTime || 
+                    `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                
+                const logEntry = `${time} - ${message}`;
+                historyLog.unshift(logEntry); // Adiciona no início do array
+                
+                updateHistoryDisplay();
+            }
+
+            // Função para atualizar a exibição do histórico
+            function updateHistoryDisplay() {
+                const logContainer = document.getElementById('log-container');
+                logContainer.innerHTML = ''; // Limpa o container
+                
+                // Adiciona cada entrada do histórico
+                historyLog.forEach(entry => {
+                    const p = document.createElement('p');
+                    p.textContent = entry;
+                    logContainer.appendChild(p);
+                });
+            }
         });
     </script>
 
