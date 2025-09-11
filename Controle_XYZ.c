@@ -5,20 +5,24 @@
 #include "hardware/i2c.h"       // Biblioteca de I2C
 #include "hardware/pwm.h"       // Biblioteca de PWM
 #include "hardware/pio.h"
+#include "hardware/clocks.h"
+
+#include "lwip/tcp.h"           // Biblioteca de TCP
+#include "lwip/err.h"           // Biblioteca de erros lwIP
+#include "lwip/pbuf.h"          // Biblioteca de buffers lwIP
+#include "lwip/ip_addr.h"       // Biblioteca de endereços IP lwIP
+#include "pico/cyw43_arch.h"    // Biblioteca do módulo Wireless CYW43439
+
+
 #include "lib/ssd1306.h"        // Biblioteca de display OLED
 #include "lib/font.h"           // Biblioteca de fontes
 #include "lib/HTML.h"           // Biblioteca para geração de HTML
-#include "hardware/clocks.h"
-// Inclui arquivo PIO para matriz LED
-#include "pio_matrix.pio.h"
 
-#include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
-#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulação de TCP/IP
+#include "pio_matrix.pio.h"     // Arquivo PIO para matriz LED
 
 #include "FreeRTOS.h"           // Biblioteca de FreeRTOS
 #include "task.h"               // Biblioteca de tasks
 
-#include <stdio.h>              // Biblioteca de entrada e saída padrão
 #include <stdlib.h>             // Biblioteca padrão
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
@@ -26,6 +30,19 @@
 //-----------------------------------------HTML----------------------------------------
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
+
+
+// Variáveis para o JSON do sistema de armazém
+static char timestamp[16] = "00:00:00";
+static char system_status[16] = "Online";
+static char pallet_on_entry[16] = "ABC-123";
+static char pallet_on_exit[16] = "";
+static bool electromagnet_active = false;
+static int current_x = 0, current_y = 0, current_z = 0;
+static char rack_status[20][8] = {"A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5", 
+                                  "C1", "C2", "C3", "C4", "C5", "D1", "D2", "D3", "D4", "D5"};
+static bool rack_occupied[20] = {true, false, false, true, false, false, true, false, false, false,
+                                false, false, true, false, false, true, false, false, true, false};
 
 #define WIFI_SSID ""                    // Nome da rede Wi-Fi
 #define WIFI_PASS ""                   // Senha da rede Wi-Fi
@@ -211,9 +228,40 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     // Endpoint JSON para /web
     if (strstr(req, "GET /web"))
     {
-        char json[256];
+        char json[1024];
+        char rack_json[512] = "[";
+        
+        // Construir array JSON dos racks
+        for(int i = 0; i < 20; i++) {
+            char rack_item[32];
+            snprintf(rack_item, sizeof(rack_item), 
+                "{\"position\":\"%s\",\"occupied\":%s}%s", 
+                rack_status[i], 
+                rack_occupied[i] ? "true" : "false",
+                i < 19 ? "," : "");
+            strcat(rack_json, rack_item);
+        }
+        strcat(rack_json, "]");
+        
         int jsonlen = snprintf(json, sizeof(json),
-            "{\""); //Conteúdo do JSON
+            "{"
+            "\"timestamp\":\"%s\","
+            "\"system_status\":\"%s\","
+            "\"pallet_on_entry\":\"%s\","
+            "\"pallet_on_exit\":\"%s\","
+            "\"electromagnet_active\":%s,"
+            "\"current_position\":{\"x\":%d,\"y\":%d,\"z\":%d},"
+            "\"rack_layout\":%s"
+            "}", 
+            timestamp,
+            system_status,
+            pallet_on_entry,
+            pallet_on_exit,
+            electromagnet_active ? "true" : "false",
+            current_x, current_y, current_z,
+            rack_json
+        );
+        
         hs->len = snprintf(hs->response, sizeof(hs->response),
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/json\r\n"
