@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Controle - Armazém XYZ</title>
+    
+    <style>
+        :root{--cor-primaria:#005A9C;--cor-fundo:#f4f7f9;--cor-painel:#ffffff;--cor-texto:#333333;--cor-sucesso:#28a745;--cor-aviso:#ffc107;--cor-borda:#dee2e6;--sombra-suave:0 4px 8px rgba(0,0,0,0.05)}
+
+        *{margin:0;padding:0;box-sizing:border-box}
+
+        .main-header, .main-footer {
+            background-color: var(--cor-primaria);
+            color: white;
+            padding: 1rem 2rem;
+            text-align: center;
+        }
+
+        .dashboard-container {
+            display: flex;
+            flex-wrap: wrap; 
+            padding: 1.5rem;
+            gap: 1.5rem;
+        }
+
+        .warehouse-view-column {
+            flex: 2; 
+            min-width: 350px;
+        }
+
+        .controls-column {
+            flex: 1; 
+            min-width: 300px;
+        }
+
+        section {
+            background-color: var(--cor-painel);
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: var(--sombra-suave);
+            margin-bottom: 1.5rem;
+        }
+
+        h2, h3 {
+            margin-bottom: 1rem;
+            color: var(--cor-primaria);
+        }
+        h3 {
+            font-size: 1.1rem;
+            border-bottom: 1px solid var(--cor-borda);
+            padding-bottom: 0.5rem;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--cor-fundo);
+            color: var(--cor-texto);
+            line-height: 1.6;
+        }
+
+        .warehouse-layout {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+        }
+        
+        .rack-container {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.5rem;
+            flex-grow: 1;
+        }
+
+        .rack-cell {
+            background-color: #e9ecef;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            aspect-ratio: 1 / 1; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.9rem;
+            transition: background-color 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .rack-cell.occupied {
+            background-color: var(--cor-aviso);
+            color: var(--cor-texto);
+            border-color: #e6a800;
+        }
+
+        .rack-cell.occupied:hover {
+            background-color: #e6a800;
+            transform: scale(1.05);
+        }
+
+        .rack-cell:not(.occupied) {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+
+        .legend-color.occupied {
+            background-color: var(--cor-aviso);
+        }
+
+        .legend-color.empty {
+            background-color: #e9ecef;
+        }
+
+        .conveyor {
+            border: 2px dashed var(--cor-primaria);
+            padding: 1rem 0.5rem;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        .pallet-info {
+            margin-top: 1rem;
+            font-weight: bold;
+            color: var(--cor-sucesso);
+        }
+
+        .control-group {
+            margin-bottom: 2rem;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        
+        input[type="text"], input[type="number"], input[type="date"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--cor-borda);
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        button {
+            padding: 0.75rem 1rem;
+            border: none;
+            border-radius: 4px;
+            background-color: var(--cor-primaria);
+            color: white;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        button:hover {
+            background-color: #004a80;
+        }
+
+        #electromagnet-control {
+            margin-top: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        #log-container {
+            background-color: #f8f9fa;
+            border: 1px solid var(--cor-borda);
+            border-radius: 4px;
+            padding: 1rem;
+            height: 150px;
+            overflow-y: auto;
+            font-family: "Courier New", monospace;
+            font-size: 0.9rem;
+        }
+        #log-container p {
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #eee;
+        }
+        #log-container p:last-child {
+            border-bottom: none;
+        }
+
+        .popup-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .popup {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .popup h3 {
+            margin-bottom: 1rem;
+            color: var(--cor-primaria);
+        }
+
+        .popup-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 1.5rem;
+        }
+
+        .popup-buttons button {
+            padding: 0.5rem 1.5rem;
+        }
+
+        .popup-buttons button.cancel {
+            background-color: #6c757d;
+        }
+
+        .popup-buttons button.cancel:hover {
+            background-color: #5a6268;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="main-header">
+        <h1>Painel de Controle - Armazém Automatizado XYZ</h1>
+    </header>
+
+    <main class="dashboard-container">
+
+        <div class="warehouse-view-column">
+            <section id="visualizacao-rack">
+                <h2>Layout do Armazém</h2>
+                <div class="warehouse-layout">
+                    
+                    <div id="entry-conveyor" class="conveyor">
+                        <h3>Entrada</h3>
+                        <div class="pallet-info" id="pallet-on-entry">
+                            <p>ID: ABC-123</p> 
+                        </div>
+                    </div>
+
+                    <div class="rack-container">
+                        <div class="rack-cell occupied" data-position="A1">A1</div>
+                        <div class="rack-cell" data-position="A2">A2</div>
+                        <div class="rack-cell" data-position="A3">A3</div>
+                        <div class="rack-cell occupied" data-position="A4">A4</div>
+                        <div class="rack-cell" data-position="A5">A5</div>
+                        <div class="rack-cell" data-position="B1">B1</div>
+                        <div class="rack-cell occupied" data-position="B2">B2</div>
+                        <div class="rack-cell" data-position="B3">B3</div>
+                        <div class="rack-cell" data-position="B4">B4</div>
+                        <div class="rack-cell" data-position="B5">B5</div>
+                        <div class="rack-cell" data-position="C1">C1</div>
+                        <div class="rack-cell" data-position="C2">C2</div>
+                        <div class="rack-cell occupied" data-position="C3">C3</div>
+                        <div class="rack-cell" data-position="C4">C4</div>
+                        <div class="rack-cell" data-position="C5">C5</div>
+                        <div class="rack-cell occupied" data-position="D1">D1</div>
+                        <div class="rack-cell" data-position="D2">D2</div>
+                        <div class="rack-cell" data-position="D3">D3</div>
+                        <div class="rack-cell occupied" data-position="D4">D4</div>
+                        <div class="rack-cell" data-position="D5">D5</div>
+                    </div>
+                    
+                    <div id="exit-conveyor" class="conveyor">
+                        <h3>Saída</h3>
+                         <div class="pallet-info" id="pallet-on-exit">
+                            </div>
+                    </div>
+
+                </div>
+                
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color occupied"></div>
+                        <span>Ocupado (com pallet armazenado)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color empty"></div>
+                        <span>Vazio (sem pallet)</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <div class="controls-column">
+            <section id="painel-controle">
+                <h2>Painel de Controle</h2>
+
+                <div class="control-group" id="pallet-operations">
+                    <h3>Operações com Pallets</h3>
+                    <form id="store-form">
+                        <p>Armazenar pallet da esteira de entrada.</p>
+                        <button type="submit">Iniciar Armazenamento</button>
+                    </form>
+                    <form id="retrieve-form">
+                        <label for="pallet-position-input">Retirar pallet da posição:</label>
+                        <input type="text" id="pallet-position-input" name="position" placeholder="Ex: B3" required>
+                        <button type="submit">Iniciar Retirada</button>
+                    </form>
+                </div>
+
+                <div class="control-group" id="manual-control">
+                    <h3>Controle Manual</h3>
+                    <form id="move-form">
+                        <label for="coord-x">Eixo X:</label>
+                        <input type="number" id="coord-x" name="x" min="0" value="0">
+                        <label for="coord-y">Eixo Y:</label>
+                        <input type="number" id="coord-y" name="y" min="0" value="0">
+                        <label for="coord-z">Eixo Z:</label>
+                        <input type="number" id="coord-z" name="z" min="0" value="0">
+                        <button type="submit">Mover para Coordenada</button>
+                    </form>
+                    <div id="electromagnet-control">
+                         <button id="electromagnet-toggle-btn">Ativar Eletroímã</button>
+                         <span>Status: <b id="electromagnet-status">Desativado</b></span>
+                    </div>
+                </div>
+            </section>
+            
+            <section id="historico">
+                <h2>Histórico de Movimentações</h2>
+                <form id="history-filter-form">
+                    <label for="filter-date">Filtrar por data:</label>
+                    <input type="date" id="filter-date" name="date">
+                    <button type="submit">Filtrar</button>
+                </form>
+                <div id="log-container">
+                </div>
+            </section>
+        </div>
+
+    </main>
+
+    <div class="popup-overlay" id="popup-overlay">
+        <div class="popup">
+            <h3>Confirmar Remoção</h3>
+            <p>Deseja remover o pallet da posição <span id="popup-position"></span>?</p>
+            <div class="popup-buttons">
+                <button id="confirm-remove">Sim</button>
+                <button class="cancel" id="cancel-remove">Não</button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="main-footer">
+        <p>Interface de Controle v1.0 - Status do Sistema: <span id="system-status">Online</span></p>
+    </footer>
+
+    <script>
+        // Variáveis globais
+        let historyLog = [];
+        let electromagnetActive = false;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const rackCells = document.querySelectorAll('.rack-cell');
+            const popupOverlay = document.getElementById('popup-overlay');
+            const popupPosition = document.getElementById('popup-position');
+            const confirmButton = document.getElementById('confirm-remove');
+            const cancelButton = document.getElementById('cancel-remove');
+            const electromagnetBtn = document.getElementById('electromagnet-toggle-btn');
+            const electromagnetStatus = document.getElementById('electromagnet-status');
+            let currentSlot = null;
+
+            // Formulários
+            const storeForm = document.getElementById('store-form');
+            const retrieveForm = document.getElementById('retrieve-form');
+            const moveForm = document.getElementById('move-form');
+            const filterForm = document.getElementById('history-filter-form');
+
+            // Inicializar o histórico com as entradas de exemplo
+            initializeHistory();
+
+            // Event listeners para os botões/cliques
+            rackCells.forEach(cell => {
+                cell.addEventListener('click', function() {
+                    if (this.classList.contains('occupied')) {
+                        currentSlot = this.getAttribute('data-position');
+                        popupPosition.textContent = currentSlot;
+                        popupOverlay.style.display = 'flex';
+                    }
+                });
+            });
+
+            confirmButton.addEventListener('click', function() {
+                if (currentSlot) {
+                    addToHistory(`Pallet retirado da posição ${currentSlot}.`);
+                    // Aqui você adicionaria a lógica real de remoção
+                    popupOverlay.style.display = 'none';
+                    currentSlot = null;
+                }
+            });
+
+            cancelButton.addEventListener('click', function() {
+                popupOverlay.style.display = 'none';
+                currentSlot = null;
+            });
+
+            popupOverlay.addEventListener('click', function(e) {
+                if (e.target === popupOverlay) {
+                    popupOverlay.style.display = 'none';
+                    currentSlot = null;
+                }
+            });
+
+            // Formulário de armazenamento
+            storeForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                addToHistory("Pallet armazenado da esteira de entrada.");
+                // Aqui você adicionaria a lógica real de armazenamento
+            });
+
+            // Formulário de retirada
+            retrieveForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const positionInput = document.getElementById('pallet-position-input');
+                const position = positionInput.value.trim().toUpperCase();
+                
+                if (position) {
+                    addToHistory(`Pallet retirado da posição ${position}.`);
+                    positionInput.value = ''; // Limpa o campo
+                }
+                // Aqui você adicionaria a lógica real de retirada
+            });
+
+            // Formulário de movimento
+            moveForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const x = document.getElementById('coord-x').value;
+                const y = document.getElementById('coord-y').value;
+                const z = document.getElementById('coord-z').value;
+                
+                addToHistory(`Mecanismo movido para X:${x} Y:${y} Z:${z}.`);
+                // Aqui você adicionaria a lógica real de movimento
+            });
+
+            // Botão do eletroímã
+            electromagnetBtn.addEventListener('click', function() {
+                electromagnetActive = !electromagnetActive;
+                electromagnetStatus.textContent = electromagnetActive ? 'Ativado' : 'Desativado';
+                electromagnetBtn.textContent = electromagnetActive ? 'Desativar Eletroímã' : 'Ativar Eletroímã';
+                
+                addToHistory(`Eletroímã ${electromagnetActive ? 'ativado' : 'desativado'}.`);
+                // Aqui você adicionaria a lógica real do eletroímã
+            });
+
+            // Formulário de filtro (apenas para demonstração)
+            filterForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const filterDate = document.getElementById('filter-date').value;
+                
+                if (filterDate) {
+                    addToHistory(`Filtro aplicado para a data: ${filterDate}.`);
+                    // Aqui você implementaria a lógica real de filtro
+                }
+            });
+
+            // Função para inicializar o histórico com entradas de exemplo
+            function initializeHistory() {
+                // Limpa o histórico atual
+                historyLog = [];
+            }
+
+            // Função para adicionar uma entrada ao histórico
+            function addToHistory(message, customTime = null) {
+                const now = new Date();
+                const time = customTime || 
+                    `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                
+                const logEntry = `${time} - ${message}`;
+                historyLog.unshift(logEntry); // Adiciona no início do array
+                
+                updateHistoryDisplay();
+            }
+
+            // Função para atualizar a exibição do histórico
+            function updateHistoryDisplay() {
+                const logContainer = document.getElementById('log-container');
+                logContainer.innerHTML = ''; // Limpa o container
+                
+                // Adiciona cada entrada do histórico
+                historyLog.forEach(entry => {
+                    const p = document.createElement('p');
+                    p.textContent = entry;
+                    logContainer.appendChild(p);
+                });
+            }
+        });
+    </script>
+
+</body>
+</html>
