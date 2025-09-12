@@ -2,10 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Cria a resposta HTML em um buffer maior
-char html[32768]; // 32KB - tamanho para HTML completo
-
-extern char html[32768];
+// Cria a resposta HTML em um buffer
+char html[16384]; // 16KB - tamanho de buffer para HTM
 
 void preencher_html() {
     snprintf(html, sizeof(html),
@@ -476,14 +474,28 @@ void preencher_html() {
         "                });\n"
         "            });\n"
         "\n"
-        "            confirmButton.addEventListener('click', function() {\n"
-        "                if (currentSlot) {\n"
-        "                    const url = new URL(window.location);\n"
-        "                    url.searchParams.set('slot', currentSlot);\n"
-        "                    window.location.href = url.toString();\n"
-        "                }\n"
-        "                popupOverlay.style.display = 'none';\n"
-        "            });\n"
+        "           // TRECHO ALTERADO: USANDO FETCH API PARA A REQUISIÇÃO DE RETIRADA\n"
+        "           confirmButton.addEventListener('click', function() {\n"
+        "               if (currentSlot) {\n"
+        "                   fetch(`/retrieve?slot=${currentSlot}`, {\n"
+        "                       method: 'POST'\n"
+        "                   })\n"
+        "                   .then(response => {\n"
+        "                       if (response.ok) {\n"
+        "                           addToHistory(`Requisição de retirada para a posição ${currentSlot} enviada com sucesso.`);\n"
+        "                       } else {\n"
+        "                           addToHistory(`ERRO: Falha ao enviar requisição de retirada para ${currentSlot}.`);\n"
+        "                       }\n"
+        "                   })\n"
+        "                   .catch(error => {\n"
+        "                       addToHistory('ERRO: Não foi possível conectar ao servidor para a retirada.');\n"
+        "                       console.error('Erro de conexão:', error);\n"
+        "                   });\n"
+        "               }\n"
+        "               popupOverlay.style.display = 'none';\n"
+        "               currentSlot = null;\n"
+        "           });\n"
+        "           // FIM DO TRECHO ALTERADO\n"
         "\n"
         "            cancelButton.addEventListener('click', function() {\n"
         "                popupOverlay.style.display = 'none';\n"
@@ -589,4 +601,3 @@ void preencher_html() {
         "</body>\n"
         "</html>\n");
 }
-

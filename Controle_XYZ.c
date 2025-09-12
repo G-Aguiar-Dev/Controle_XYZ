@@ -37,7 +37,6 @@ static char timestamp[16] = "00:00:00";
 static char system_status[16] = "Online";
 static char pallet_on_entry[16] = "ABC-123";
 static char pallet_on_exit[16] = "";
-static bool electromagnet_active = false;
 static int current_x = 0, current_y = 0, current_z = 0;
 static char rack_status[20][8] = {"A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5", 
                                   "C1", "C2", "C3", "C4", "C5", "D1", "D2", "D3", "D4", "D5"};
@@ -59,7 +58,7 @@ static bool rack_occupied[20] = {true, false, false, true, false, false, true, f
 
 struct http_state                               // Struct para manter o estado da conexão HTTP
 {
-    char response[32768]; // 32KB - tamanho para HTML completo
+    char response[16384]; // 16KB - tamanho otimizado para HTML
     size_t len;
     size_t sent;
     size_t offset; // bytes já enfileirados para envio
@@ -119,13 +118,19 @@ void vPollingTask(void *pvParameters)
     }
 }
 
+// Hook para falha de alocação de memória
+void vApplicationMallocFailedHook(void);
+
+// Hook para overflow de stack
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName);
+
 //----------------------------------------MAIN-----------------------------------------
 
 int main()
 {
     stdio_init_all();
 
-    sleep_ms(4000);               // Aguarda 4 segundos para inicialização
+    sleep_ms(4000);                 // Aguarda 4 segundos para inicialização
 
     if (cyw43_arch_init())          // Inicializa o Wi-fi
     {
@@ -155,7 +160,7 @@ int main()
     start_http_server();                            // Inicia o servidor HTTP
 
     // Tasks
-    xTaskCreate(vPollingTask, "Polling Task", 256, NULL, 1, NULL);
+    xTaskCreate(vPollingTask, "Polling Task", 512, NULL, 1, NULL);
     vTaskStartScheduler();
     panic_unsupported();
 }
@@ -207,6 +212,9 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     if (!p)
     {
         tcp_close(tpcb);
+        if (arg) {
+            free(arg);  // Libera memória se existir
+        }
         return ERR_OK;
     }
     tcp_recved(tpcb, p->tot_len);
@@ -219,9 +227,10 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     if (!hs)
     {
         pbuf_free(p);
-        tcp_close(tpcb);
+        tcp_abort(tpcb);  // Usa abort ao invés de close em caso de erro de memória
         return ERR_MEM;
     }
+    memset(hs, 0, sizeof(struct http_state));  // Inicializa com zeros
     hs->sent = 0;
     hs->offset = 0;
 
@@ -342,10 +351,24 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     return ERR_OK;
 }
 
+// Callback para tratar erros de conexão
+static void http_err(void *arg, err_t err)
+{
+    if (arg) {
+        free(arg);
+    }
+}
+
 // Função de callback para aceitar novas conexões TCP
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
+    if (err != ERR_OK) {
+        return err;
+    }
+    
     tcp_recv(newpcb, http_recv);
+    tcp_err(newpcb, http_err);  // Define callback de erro
+    tcp_nagle_disable(newpcb);  // Desabilita algoritmo de Nagle para resposta mais rápida
     return ERR_OK;
 }
 
@@ -432,6 +455,23 @@ static void extract_url_parameters(char *request)
             printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
         }
     }
+}
+
+// Hook para falha de alocação de memória
+void vApplicationMallocFailedHook(void)
+{
+    printf("ERRO: Falha na alocacao de memoria!\n");
+    // Em caso crítico, pode-se reiniciar o sistema
+    taskDISABLE_INTERRUPTS();
+    for (;;);
+}
+
+// Hook para overflow de stack
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    printf("ERRO: Overflow de stack na task: %s\n", pcTaskName);
+    taskDISABLE_INTERRUPTS();
+    for (;;);
 }
 
 // Funções da matriz LED
