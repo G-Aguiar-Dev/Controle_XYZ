@@ -6,6 +6,7 @@
     <title>Painel de Controle - Armazém XYZ</title>
     
     <style>
+        /* 1. VARIÁVEIS DE COR E ESTILOS GLOBAIS */
         :root {
             --cor-primaria: #005A9C;
             --cor-fundo: #f4f7f9;
@@ -14,64 +15,85 @@
             --cor-sucesso: #28a745;
             --cor-aviso: #ffc107;
             --cor-borda: #dee2e6;
-            --cor-fundo-secundario: #f8f9fa;
-            --cor-rack-vazio: #e9ecef;
-            --sombra-suave: 0 4px 8px rgba(0, 0, 0, 0.05);
+            --sombra-suave: 0 4px 8px rgba(0,0,0,0.05);
         }
 
-        /* --- INICIO: Bloco de estilo para o Modo Escuro --- */
-        body.dark-mode {
-            --cor-primaria: #3b82f6;
-            --cor-fundo: #121212;
-            --cor-painel: #2d3748;
-            --cor-texto: #e2e8f0;
-            --cor-sucesso: #48bb78;
-            --cor-aviso: #f6ad55;
-            --cor-borda: #4a5568;
-            --cor-fundo-secundario: #262e3d;
-            --cor-rack-vazio: #4a5568;
-            --sombra-suave: 0 4px 8px rgba(0, 0, 0, 0.2);
+        /* TRANSIÇÃO SUAVE PARA A MUDANÇA DE TEMA */
+        body, section, .main-header, .main-footer, input, button, .legend, #log-container, .popup, .rack-cell {
+            transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease;
         }
-        /* --- FIM: Bloco de estilo para o Modo Escuro --- */
+
+        /* 2. DEFINIÇÃO DO TEMA ESCURO */
+        body.dark-mode {
+            --cor-primaria: #2e86de;
+            --cor-fundo: #121212;
+            --cor-painel: #1e1e2e;
+            --cor-texto: #e2e2e2;
+            --cor-borda: #4a4a5e;
+            --sombra-suave: 0 4px 12px rgba(0,0,0,0.2);
+        }
 
         *{margin:0;padding:0;box-sizing:border-box}
-
-        body{
-            font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-            background-color:var(--cor-fundo);color:var(--cor-texto);line-height:1.6;
-            transition: background-color 0.5s ease-in-out, color 0.5s ease-in-out; /* Transição suave */
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background-color:var(--cor-fundo);color:var(--cor-texto);line-height:1.6}
+        
+        .main-header {
+            background-color: var(--cor-primaria);
+            color: white;
+            padding: 1rem 2rem;
+            text-align: center;
+            position: relative; /* Necessário para posicionar o botão */
         }
 
-        .main-header, .main-footer {background-color: var(--cor-primaria);color: white;padding: 1rem 2rem;text-align: center;}
-        .main-header {display: flex; justify-content: space-between; align-items: center;}
-
-        /* --- INICIO: Estilo para o botão de tema --- */
+        /* 3. ESTILO PARA O BOTÃO DE TEMA */
         #theme-toggle-btn {
-            background-color: var(--cor-painel);
-            border: 1px solid var(--cor-borda);
-            cursor: pointer;
+            position: absolute;
+            top: 50%;
+            right: 1.5rem;
+            transform: translateY(-50%);
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            color: white;
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            font-size: 1.5rem;
+            font-size: 1.2rem;
+            cursor: pointer;
             display: flex;
-            justify-content: center;
             align-items: center;
-            padding: 0;
-            transition: background-color 0.5s ease-in-out, transform 0.2s ease;
+            justify-content: center;
         }
-        #theme-toggle-btn:hover { background-color: var(--cor-fundo); transform: scale(1.1); }
-        /* --- FIM: Estilo para o botão de tema --- */
+        #theme-toggle-btn:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Ajustes específicos para o modo escuro */
+        body.dark-mode .rack-cell:not(.occupied) {
+            background-color: #3a3a4e;
+            border-color: #555;
+        }
+        body.dark-mode .legend, body.dark-mode #log-container {
+            background-color: #252535;
+        }
+        body.dark-mode input {
+            background-color: #3a3a4e;
+            color: var(--cor-texto);
+            border-color: var(--cor-borda);
+        }
+        body.dark-mode .popup {
+            background-color: var(--cor-painel);
+        }
 
+        /* === RESTANTE DOS ESTILOS (sem alterações) === */
+        .main-footer {background-color: var(--cor-primaria);color: white;padding: 1rem 2rem;text-align: center;}
         .dashboard-container {display: flex;flex-wrap: wrap; padding: 1.5rem;gap: 1.5rem;}
         .warehouse-view-column {flex: 2; min-width: 350px;}
         .controls-column {flex: 1; min-width: 300px;}
-        section {background-color: var(--cor-painel);padding: 1.5rem;border-radius: 8px;box-shadow: var(--sombra-suave);margin-bottom: 1.5rem; transition: background-color 0.5s ease-in-out;}
+        section {background-color: var(--cor-painel);padding: 1.5rem;border-radius: 8px;box-shadow: var(--sombra-suave);margin-bottom: 1.5rem;}
         h2, h3 {margin-bottom: 1rem;color: var(--cor-primaria);}
         h3 {font-size: 1.1rem;border-bottom: 1px solid var(--cor-borda);padding-bottom: 0.5rem;}
         .warehouse-layout {display: flex;align-items: center;justify-content: center;gap: 1rem;}
         .rack-container {display: grid;grid-template-columns: repeat(5, 1fr);gap: 0.5rem;flex-grow: 1;}
-        .rack-cell {background-color: #e9ecef;border: 1px solid #ccc;border-radius: 4px;aspect-ratio: 1 / 1; display: flex;align-items: center;justify-content: center;font-weight: bold;font-size: 0.9rem;transition: background-color 0.3s ease, transform 0.2s ease;cursor: pointer;}
+        .rack-cell {background-color: #e9ecef;border: 1px solid #ccc;border-radius: 4px;aspect-ratio: 1 / 1; display: flex;align-items: center;justify-content: center;font-weight: bold;font-size: 0.9rem;cursor: pointer;}
         .rack-cell.occupied {background-color: var(--cor-aviso);color: #333;border-color: #e6a800;}
         .rack-cell.occupied:hover {background-color: #e6a800;transform: scale(1.05);}
         .rack-cell:not(.occupied) {cursor: not-allowed;opacity: 0.6;}
@@ -84,15 +106,16 @@
         .pallet-info {margin-top: 1rem;font-weight: bold;color: var(--cor-sucesso);}
         .control-group {margin-bottom: 2rem;}
         form {display: flex;flex-direction: column;gap: 0.75rem;}
-        input[type="text"], input[type="number"], input[type="date"] {width: 100%;padding: 0.75rem;border: 1px solid var(--cor-borda);border-radius: 4px;font-size: 1rem; background-color: var(--cor-fundo); color: var(--cor-texto);}
-        button {padding: 0.75rem 1rem;border: none;border-radius: 4px;background-color: var(--cor-primaria);color: white;font-size: 1rem;font-weight: bold;cursor: pointer;transition: background-color 0.2s ease;}
-        button:hover {background-color: #004a80;}
+        input[type="text"], input[type="number"], input[type="date"] {width: 100%;padding: 0.75rem;border: 1px solid var(--cor-borda);border-radius: 4px;font-size: 1rem;}
+        button {padding: 0.75rem 1rem;border: none;border-radius: 4px;background-color: var(--cor-primaria);color: white;font-size: 1rem;font-weight: bold;cursor: pointer;}
+        button:hover {opacity: 0.9;}
         #electromagnet-control {margin-top: 1rem;display: flex;align-items: center;gap: 1rem;}
-        #log-container {background-color: var(--cor-fundo-secundario);border: 1px solid var(--cor-borda);border-radius: 4px;padding: 1rem;height: 150px;overflow-y: auto;font-family: "Courier New", monospace;font-size: 0.9rem;}
-        #log-container p {padding-bottom: 0.5rem;border-bottom: 1px solid var(--cor-borda);}
+        #log-container {background-color: #f8f9fa;border: 1px solid var(--cor-borda);border-radius: 4px;padding: 1rem;height: 150px;overflow-y: auto;font-family: "Courier New", monospace;font-size: 0.9rem;}
+        #log-container p {padding-bottom: 0.5rem;border-bottom: 1px solid #eee;}
+        body.dark-mode #log-container p {border-bottom-color: var(--cor-borda);}
         #log-container p:last-child {border-bottom: none;}
         .popup-overlay {position: fixed;top: 0;left: 0;width: 100%;height: 100%;background-color: rgba(0, 0, 0, 0.5);display: none;justify-content: center;align-items: center;z-index: 1000;}
-        .popup {background-color: var(--cor-painel);padding: 2rem;border-radius: 8px;box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);text-align: center;max-width: 400px;width: 90%;}
+        .popup {padding: 2rem;border-radius: 8px;box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);text-align: center;max-width: 400px;width: 90%;}
         .popup h3 {margin-bottom: 1rem;color: var(--cor-primaria);}
         .popup-buttons {display: flex;gap: 1rem;justify-content: center;margin-top: 1.5rem;}
         .popup-buttons button {padding: 0.5rem 1.5rem;}
@@ -101,7 +124,11 @@
     </style>
 </head>
 <body>
-    <header class="main-header"><h1>Painel de Controle - Armazém Automatizado XYZ</h1><button id="theme-toggle-btn">🌙</button></header>
+    <header class="main-header">
+        <h1>Painel de Controle - Armazém Automatizado XYZ</h1>
+        <button id="theme-toggle-btn">🌙</button>
+    </header>
+
     <main class="dashboard-container">
         <div class="warehouse-view-column">
             <section id="visualizacao-rack">
@@ -155,7 +182,7 @@
             <section id="historico">
                 <h2>Histórico de Movimentações</h2>
                 <form id="history-filter-form"><label for="filter-date">Filtrar por data:</label><input type="date" id="filter-date" name="date"><button type="submit">Filtrar</button></form>
-                <div id="log-container"><p>15:00:12 - Pallet XYZ-789 retirado da posição A2.</p><p>14:58:34 - Mecanismo movido para X:150 Y:300 Z:50.</p><p>14:55:01 - Pallet ABC-123 armazenado na posição A5.</p></div>
+                <div id="log-container"><p></p></div>
             </section>
         </div>
     </main>
@@ -167,29 +194,35 @@
         </div>
     </div>
     <footer class="main-footer"><p>Interface de Controle v1.0 - Status do Sistema: <span id="system-status">Online</span></p></footer>
+
     <script>
+        // LÓGICA DO TEMA VEM PRIMEIRO PARA EVITAR "PISCAR" A TELA
+        const themeToggleBtn = document.getElementById('theme-toggle-btn');
+        const currentTheme = localStorage.getItem('theme');
+
+        // Se houver um tema salvo, aplica-o
+        if (currentTheme === 'dark') {
+            document.body.classList.add('dark-mode');
+            themeToggleBtn.innerHTML = '☀️';
+        }
+
+        themeToggleBtn.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            
+            let theme = 'light';
+            if (document.body.classList.contains('dark-mode')) {
+                theme = 'dark';
+                themeToggleBtn.innerHTML = '☀️'; // Muda para sol no modo escuro
+            } else {
+                themeToggleBtn.innerHTML = '🌙'; // Muda para lua no modo claro
+            }
+            localStorage.setItem('theme', theme);
+        });
+
+
+        // Restante do seu JavaScript
         let historyLog = [];
         document.addEventListener('DOMContentLoaded', function() {
-            /* --- INICIO: Lógica para alternar o tema --- */
-            const themeToggleButton = document.getElementById('theme-toggle-btn');
-            const body = document.body;
-            const savedTheme = localStorage.getItem('theme');
-            if (savedTheme === 'dark') {
-                body.classList.add('dark-mode');
-                themeToggleButton.textContent = '☀️';
-            }
-            themeToggleButton.addEventListener('click', () => {
-                body.classList.toggle('dark-mode');
-                if (body.classList.contains('dark-mode')) {
-                    themeToggleButton.textContent = '☀️';
-                    localStorage.setItem('theme', 'dark');
-                } else {
-                    themeToggleButton.textContent = '🌙';
-                    localStorage.setItem('theme', 'light');
-                }
-            });
-            /* --- FIM: Lógica para alternar o tema --- */
-
             const rackCells = document.querySelectorAll('.rack-cell');
             const popupOverlay = document.getElementById('popup-overlay');
             const popupPosition = document.getElementById('popup-position');
@@ -203,6 +236,8 @@
             const retrieveForm = document.getElementById('retrieve-form');
             const moveForm = document.getElementById('move-form');
             const filterForm = document.getElementById('history-filter-form');
+            const positionInput = document.getElementById('pallet-position-input');
+
             initializeHistory();
 
             rackCells.forEach(cell => {
@@ -272,8 +307,29 @@
                 });
             });
             
+            retrieveForm.addEventListener('submit', function(e) { 
+                e.preventDefault();
+                const pos = positionInput.value.trim().toUpperCase();
+                
+                if (pos) {
+                    const cellElement = document.querySelector(`[data-position="${pos}"]`);
+                    if (cellElement && cellElement.classList.contains('occupied')) {
+                        cellElement.classList.remove('occupied');
+                        addToHistory(`Pallet retirado da posição ${pos}.`);
+                        positionInput.value = '';
+                        positionInput.setCustomValidity('');
+                    } else {
+                        positionInput.setCustomValidity('Não há um pallet nesta posição.');
+                        positionInput.reportValidity();
+                    }
+                }
+            });
+
+            positionInput.addEventListener('input', function() {
+                positionInput.setCustomValidity('');
+            });
+
             storeForm.addEventListener('submit', function(e) { e.preventDefault(); addToHistory("Pallet armazenado da esteira de entrada."); });
-            retrieveForm.addEventListener('submit', function(e) { e.preventDefault(); const pos = document.getElementById('pallet-position-input').value.trim().toUpperCase(); if (pos) { addToHistory(`Pallet retirado da posição ${pos}.`); document.getElementById('pallet-position-input').value = ''; } });
             moveForm.addEventListener('submit', function(e) { e.preventDefault(); const x = document.getElementById('coord-x').value; const y = document.getElementById('coord-y').value; const z = document.getElementById('coord-z').value; addToHistory(`Mecanismo movido para X:${x} Y:${y} Z:${z}.`); });
             filterForm.addEventListener('submit', function(e) { e.preventDefault(); const date = document.getElementById('filter-date').value; if (date) { addToHistory(`Filtro aplicado para data: ${date}.`); } });
 
