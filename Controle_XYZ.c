@@ -40,6 +40,10 @@
 #define ELECTROMAGNET_PIN 13
 #define ELECTROMAGNET_LED_PIN 13  // LED no mesmo pino do eletroímã
 
+// Configurações dos botões
+#define BUTTON_A_PIN 5
+#define BUTTON_B_PIN 6
+
 struct http_state                               // Struct para manter o estado da conexão HTTP
 {
     char response[32768]; // 32KB - tamanho para HTML completo
@@ -55,6 +59,13 @@ uint sm;
 
 // Variáveis do eletroímã
 static bool electromagnet_active = false;
+
+// Variáveis de controle manual
+static int current_position = 0;  // Posição atual (0-24)
+static bool led_states[25] = {false};  // Estado de cada LED (false = apagado, true = aceso)
+static bool button_a_pressed = false;
+static bool button_b_pressed = false;
+static uint32_t last_button_time = 0;
 
 //---------------------------------------FUNÇÕES---------------------------------------
 
@@ -90,6 +101,12 @@ static void ativar_eletroima(void);
 static void desativar_eletroima(void);
 static void toggle_eletroima(void);
 
+// Funções de controle manual
+static void inicializa_botoes(void);
+static void processa_botoes(void);
+static void atualiza_display_manual(void);
+static int indice_para_coordenadas(int indice, int *x, int *y);
+
 //----------------------------------------TASKS----------------------------------------
 
 // Task de polling para manter a conexão Wi-Fi ativa
@@ -99,6 +116,16 @@ void vPollingTask(void *pvParameters)
     {
         cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexão ativa
         vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
+    }
+}
+
+// Task para controle manual dos botões
+void vButtonControlTask(void *pvParameters)
+{
+    while (true)
+    {
+        processa_botoes();
+        vTaskDelay(50);  // Aguarda 50ms antes de verificar novamente
     }
 }
 
@@ -135,10 +162,13 @@ int main()
 
     inicializa_matriz_led();                        // Inicializa matriz LED
     inicializa_eletroima();                         // Inicializa eletroímã
+    inicializa_botoes();                            // Inicializa botões
+    atualiza_display_manual();                      // Inicializa display manual
     start_http_server();                            // Inicia o servidor HTTP
 
     // Tasks
     xTaskCreate(vPollingTask, "Polling Task", 512, NULL, 1, NULL);
+    xTaskCreate(vButtonControlTask, "Button Control Task", 512, NULL, 2, NULL);
     vTaskStartScheduler();
     panic_unsupported();
 }
@@ -503,4 +533,96 @@ static void toggle_eletroima(void) {
     } else {
         ativar_eletroima();
     }
+}
+
+// Funções de controle manual
+
+// Inicializa os botões
+static void inicializa_botoes(void) {
+    gpio_init(BUTTON_A_PIN);
+    gpio_set_dir(BUTTON_A_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_A_PIN);
+    
+    gpio_init(BUTTON_B_PIN);
+    gpio_set_dir(BUTTON_B_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_B_PIN);
+    
+    printf("Botões inicializados - A: GPIO %d, B: GPIO %d\n", BUTTON_A_PIN, BUTTON_B_PIN);
+}
+
+// Converte índice (0-24) para coordenadas (x,y)
+static int indice_para_coordenadas(int indice, int *x, int *y) {
+    if (indice < 0 || indice >= NUM_PIXELS) {
+        *x = -1;
+        *y = -1;
+        return 0;
+    }
+    
+    *y = indice / MATRIZ_LARGURA;
+    *x = indice % MATRIZ_LARGURA;
+    
+    // Aplica o padrão zigzag da matriz
+    if (*y % 2 == 1) {
+        *x = MATRIZ_LARGURA - 1 - *x;
+    }
+    
+    return 1;
+}
+
+// Atualiza o display com o estado atual
+static void atualiza_display_manual(void) {
+    // Limpa toda a matriz
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        matriz_leds[i] = 0x000000;
+    }
+    
+    // Desenha LEDs acesos
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        if (led_states[i]) {
+            int x, y;
+            if (indice_para_coordenadas(i, &x, &y)) {
+                matriz_leds[i] = 0x00FF00; // Verde para LEDs acesos
+            }
+        }
+    }
+    
+    // Desenha posição atual em azul
+    int x, y;
+    if (indice_para_coordenadas(current_position, &x, &y)) {
+        matriz_leds[current_position] = 0x0000FF; // Azul para posição atual
+    }
+    
+    atualiza_matriz();
+}
+
+// Processa os botões
+static void processa_botoes(void) {
+    uint32_t current_time = to_ms_since_boot(get_absolute_time());
+    
+    // Debounce - evita múltiplas leituras em pouco tempo
+    if (current_time - last_button_time < 200) {
+        return;
+    }
+    
+    bool button_a_current = !gpio_get(BUTTON_A_PIN); // Invertido devido ao pull-up
+    bool button_b_current = !gpio_get(BUTTON_B_PIN);
+    
+    // Botão A - navegação
+    if (button_a_current && !button_a_pressed) {
+        current_position = (current_position + 1) % NUM_PIXELS;
+        printf("Posição atual: %d\n", current_position);
+        atualiza_display_manual();
+        last_button_time = current_time;
+    }
+    button_a_pressed = button_a_current;
+    
+    // Botão B - toggle LED
+    if (button_b_current && !button_b_pressed) {
+        led_states[current_position] = !led_states[current_position];
+        printf("LED posição %d: %s\n", current_position, 
+               led_states[current_position] ? "ACESO" : "APAGADO");
+        atualiza_display_manual();
+        last_button_time = current_time;
+    }
+    button_b_pressed = button_b_current;
 }
