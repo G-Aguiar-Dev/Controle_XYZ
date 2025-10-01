@@ -22,6 +22,88 @@
 #include <stdlib.h>             // Biblioteca padrão
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
+#include <stdarg.h>
+#include <stdbool.h>
+
+// Histórico de logs em memória
+#define LOG_CAP 120
+#define LOG_LINE_MAX 128
+static char g_log[LOG_CAP][LOG_LINE_MAX];
+static int g_log_head = 0;  // aponta para a próxima posição de escrita
+static int g_log_count = 0; // quantos registros válidos
+
+static void log_push(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_log[g_log_head], LOG_LINE_MAX, fmt, ap);
+    va_end(ap);
+
+    g_log_head = (g_log_head + 1) % LOG_CAP;
+    if (g_log_count < LOG_CAP) g_log_count++;
+}
+
+// retorna a linha i (0 = mais antiga, g_log_count-1 = mais recente)
+static const char *log_get(int idx)
+{
+    if (idx < 0 || idx >= g_log_count) return "";
+    int start = (g_log_head - g_log_count + LOG_CAP) % LOG_CAP;
+    int i = (start + idx) % LOG_CAP;
+    return g_log[i];
+}
+
+// simples utilitários para parsing de URL/query
+static int url_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+static void url_decode_inplace(char *s) {
+    char *w = s;
+    while (*s) {
+        if (*s == '+') { *w++ = ' '; s++; }
+        else if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
+            int hi = url_hex(s[1]);
+            int lo = url_hex(s[2]);
+            if (hi >= 0 && lo >= 0) {
+                *w++ = (char)((hi << 4) | lo);
+                s += 3;
+            } else {
+                *w++ = *s++; // invalid, copy raw
+            }
+        } else {
+            *w++ = *s++;
+        }
+    }
+    *w = '\0';
+}
+
+// procura key na query string da primeira linha (após '?') e copia o valor decodificado
+static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
+    const char *q = strchr(req, '?');
+    if (!q) return false;
+    q++; // after ?
+    size_t klen = strlen(key);
+    while (*q && *q != '\r' && *q != '\n' && *q != ' ') {
+        if (strncmp(q, key, klen) == 0 && q[klen] == '=') {
+            const char *v = q + klen + 1;
+            size_t i = 0;
+            while (*v && *v != '&' && *v != ' ' && *v != '\r' && *v != '\n') {
+                if (i + 1 < outsz) out[i++] = *v;
+                v++;
+            }
+            out[i] = '\0';
+            url_decode_inplace(out);
+            return true;
+        }
+        // skip to next param
+        while (*q && *q != '&' && *q != ' ' && *q != '\r' && *q != '\n') q++;
+        if (*q == '&') q++;
+    }
+    return false;
+}
 
 //-----------------------------------------HTML----------------------------------------
 
@@ -40,12 +122,14 @@
 #define ELECTROMAGNET_PIN 13
 #define ELECTROMAGNET_LED_PIN 13  // LED no mesmo pino do eletroímã
 
-struct http_state                               // Struct para manter o estado da conexão HTTP
+struct http_state // Struct para manter o estado da conexão HTTP
 {
-    char response[32768]; // 32KB - tamanho para HTML completo
-    size_t len;
+    const char *response_ptr;   // ponteiro para o buffer com a resposta
+    char smallbuf[1024];        // usado para respostas pequenas/JSON
+    size_t len;                 // tamanho total da resposta
     size_t sent;
     size_t offset; // bytes já enfileirados para envio
+    bool using_smallbuf;
 };
 
 // Variáveis da matriz LED
@@ -150,11 +234,13 @@ int main()
 // Função para enviar o próximo pedaço de resposta se houver espaço na janela
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
 {
-    if (hs->offset >= hs->len) return;
+    if (hs->offset >= hs->len)
+        return;
     size_t remaining = hs->len - hs->offset;
     size_t to_send = remaining > CHUNK_SIZE ? CHUNK_SIZE : remaining;
-    if (tcp_sndbuf(tpcb) < to_send) return; // Aguardar janela
-    err_t err = tcp_write(tpcb, hs->response + hs->offset, to_send, TCP_WRITE_FLAG_COPY);
+    if (tcp_sndbuf(tpcb) < to_send)
+        return; // Aguardar janela
+    err_t err = tcp_write(tpcb, hs->response_ptr + hs->offset, to_send, TCP_WRITE_FLAG_COPY);
     if (err == ERR_OK)
     {
         hs->offset += to_send;
@@ -194,10 +280,22 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     tcp_recved(tpcb, p->tot_len);
 
-    char *req = (char *)p->payload;
-    
-    extract_url_parameters(req);
-    
+    #define REQ_BUF_SZ 2048
+    char reqbuf[REQ_BUF_SZ];
+    size_t tocopy = p->tot_len < (REQ_BUF_SZ - 1) ? p->tot_len : (REQ_BUF_SZ - 1);
+    size_t copied = 0;
+    struct pbuf *q;
+    for (q = p; q != NULL && copied < tocopy; q = q->next)
+    {
+        size_t chunk = q->len;
+        if (chunk > tocopy - copied)
+            chunk = tocopy - copied;
+        memcpy(reqbuf + copied, q->payload, chunk);
+        copied += chunk;
+    }
+    reqbuf[copied] = '\0';
+    char *req = reqbuf;
+
     struct http_state *hs = malloc(sizeof(struct http_state));
     if (!hs)
     {
@@ -207,87 +305,68 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     hs->sent = 0;
     hs->offset = 0;
+    hs->using_smallbuf = false;
+    hs->response_ptr = NULL;
 
-    // Endpoint JSON para /web
-    if (strstr(req, "GET /web"))
+    // ESTRUTURA CORRIGIDA AQUI
+    if (strstr(req, "GET /api/log?"))
     {
-        char json[256];
-        int jsonlen = snprintf(json, sizeof(json),
-            "{\""); //Conteúdo do JSON
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "%s",
-            jsonlen, json);
-        tcp_arg(tpcb, hs);
-        tcp_sent(tpcb, http_sent);
-        send_next_chunk(tpcb, hs);
-        pbuf_free(p);
-        return ERR_OK;
-    }
-    
-    // Endpoint JSON para /electromagnet-status
-    if (strstr(req, "GET /electromagnet-status"))
-    {
-        char json[128];
-        int jsonlen = snprintf(json, sizeof(json),
-            "{\"active\":%s,\"status\":\"%s\"}",
-            electromagnet_active ? "true" : "false",
-            electromagnet_active ? "Ativado" : "Desativado");
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "%s",
-            jsonlen, json);
-        tcp_arg(tpcb, hs);
-        tcp_sent(tpcb, http_sent);
-        send_next_chunk(tpcb, hs);
-        pbuf_free(p);
-        return ERR_OK;
-    }
-
-    if (strstr(req, "POST /toggle-electromagnet")) 
-    {
-        // Executa a função que liga/desliga o LED
-        toggle_eletroima();
-        
-        // Prepara uma resposta simples de sucesso (200 OK)
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Length: 0\r\n"
-            "Connection: close\r\n"
-            "\r\n");
-
-        // Envia a resposta de volta para o navegador
-        tcp_arg(tpcb, hs);
-        tcp_sent(tpcb, http_sent);
-        send_next_chunk(tpcb, hs);
-        
-        pbuf_free(p);
-        return ERR_OK;
-    }
-
-    else
-    {
-        preencher_html();
-        
-        hs->len = strlen(html);
-        if (hs->len >= sizeof(hs->response)) {
-            hs->len = sizeof(hs->response) - 1;
+        char msg[256];
+        if (query_param(req, "msg", msg, sizeof(msg)))
+        {
+            log_push("%s", msg);
         }
-        memcpy(hs->response, html, hs->len);
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else if (strstr(req, "GET /api/history"))
+    {
+        size_t off = 0;
+        off += snprintf(hs->smallbuf + off, sizeof(hs->smallbuf) - off,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[");
+        for (int i = 0; i < g_log_count; i++)
+        {
+            const char *ln = log_get(i);
+            char esc[LOG_LINE_MAX * 2];
+            size_t j = 0;
+            for (size_t k = 0; k < strlen(ln) && j + 2 < sizeof(esc); k++)
+            {
+                if (ln[k] == '"' || ln[k] == '\\')
+                {
+                    esc[j++] = '\\';
+                    esc[j++] = ln[k];
+                }
+                else if ((unsigned char)ln[k] < 0x20)
+                {
+                    esc[j++] = ' ';
+                }
+                else
+                {
+                    esc[j++] = ln[k];
+                }
+            }
+            esc[j] = '\0';
+            off += snprintf(hs->smallbuf + off, sizeof(hs->smallbuf) - off,
+                            "%s\"%s\"", (i ? "," : ""), esc);
+            if (off >= sizeof(hs->smallbuf) - 4)
+                break;
+        }
+        off += snprintf(hs->smallbuf + off, sizeof(hs->smallbuf) - off, "]");
+        hs->len = off;
+        hs->response_ptr = hs->smallbuf;
+        hs->using_smallbuf = true;
+    }
+    else
+    { // Rota padrão (página principal)
+        preencher_html();
+        hs->response_ptr = html; // apontar para buffer global
+        hs->len = strlen(html);
+        hs->using_smallbuf = false;
     }
 
     tcp_arg(tpcb, hs);
     tcp_sent(tpcb, http_sent);
-
-    // inicia envio por fatias
     send_next_chunk(tpcb, hs);
 
     pbuf_free(p);
