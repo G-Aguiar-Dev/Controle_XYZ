@@ -23,7 +23,6 @@
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
 #include <stdarg.h>
-#include <stdbool.h>
 
 // Histórico de logs em memória
 #define LOG_CAP 120
@@ -105,11 +104,10 @@ static bool query_param(const char *req, const char *key, char *out, size_t outs
     return false;
 }
 
-//-----------------------------------------HTML----------------------------------------
-
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
 #define WIFI_SSID ""                    // Nome da rede Wi-Fi
+
 #define WIFI_PASS ""                   // Senha da rede Wi-Fi
 
 // Configurações da matriz WS2812
@@ -156,9 +154,6 @@ static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
 
 // Função para iniciar o servidor HTTP
 static void start_http_server(void);
-
-// Função para extrair parâmetros da URL
-static void extract_url_parameters(char *request);
 
 // Funções da matriz LED
 static int coordenada_para_indice(int x, int y);
@@ -308,7 +303,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     hs->using_smallbuf = false;
     hs->response_ptr = NULL;
 
-    // ESTRUTURA CORRIGIDA AQUI
+    // PROCESSAMENTO DAS ROTAS HTTP
     if (strstr(req, "GET /api/log?"))
     {
         char msg[256];
@@ -357,6 +352,60 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         hs->response_ptr = hs->smallbuf;
         hs->using_smallbuf = true;
     }
+    else if (strstr(req, "POST /store?"))
+    {
+        // Processar armazenamento de pallet
+        char slot[10];
+        if (query_param(req, "slot", slot, sizeof(slot)))
+        {
+            printf("Armazenamento solicitado - Slot: %s\n", slot);
+            log_push("Armazenamento na posição %s solicitado", slot);
+            
+            // Acende LED da posição do slot (verde para armazenamento)
+            int x, y;
+            if (converte_posicao_para_coordenadas(slot, &x, &y)) {
+                uint32_t cor = 0x00FF00; // Verde para slot ocupado
+                acende_led_matriz(x, y, cor);
+                printf("LED acendido na posição (%d,%d) - Slot: %s\n", x, y, slot);
+                log_push("LED acendido na posição (%d,%d) - Slot: %s", x, y, slot);
+            }
+        }
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else if (strstr(req, "POST /retrieve?"))
+    {
+        // Processar retirada de pallet
+        char slot[10];
+        if (query_param(req, "slot", slot, sizeof(slot)))
+        {
+            printf("Retirada solicitada - Slot: %s\n", slot);
+            log_push("Retirada da posição %s solicitada", slot);
+            
+            // Apaga LED da posição
+            int x, y;
+            if (converte_posicao_para_coordenadas(slot, &x, &y)) {
+                apaga_led_matriz(x, y);
+                printf("LED apagado na posição (%d,%d) - Slot: %s\n", x, y, slot);
+                log_push("LED apagado na posição (%d,%d) - Slot: %s", x, y, slot);
+            }
+        }
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else if (strstr(req, "POST /toggle-electromagnet"))
+    {
+        // Processar ativação/desativação do eletroímã
+        toggle_eletroima();
+        printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
+        log_push("Eletroímã %s", electromagnet_active ? "ativado" : "desativado");
+        
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
     else
     { // Rota padrão (página principal)
         preencher_html();
@@ -397,72 +446,6 @@ static void start_http_server(void)
     pcb = tcp_listen(pcb);
     tcp_accept(pcb, connection_callback);
     printf("Servidor HTTP rodando na porta 80...\n");
-}
-
-// Função para extrair parâmetros da URL
-static void extract_url_parameters(char *request)
-{
-    char *slot_param = strstr(request, "slot=");
-    char *position_param = strstr(request, "position=");
-    char *electromagnet_param = strstr(request, "electromagnet=");
-    
-    if (slot_param)
-    {
-        slot_param += 5; // Pula "slot="
-        char slot_value[10];
-        int i = 0;
-        while (*slot_param && *slot_param != '&' && *slot_param != ' ' && *slot_param != '\r' && *slot_param != '\n' && i < 9)
-        {
-            slot_value[i++] = *slot_param++;
-        }
-        slot_value[i] = '\0';
-        printf("Pallet clicado - Slot: %s\n", slot_value);
-        
-        // Acende LED da posição do slot
-        int x, y;
-        if (converte_posicao_para_coordenadas(slot_value, &x, &y)) {
-            uint32_t cor = 0x00FF00; // Verde para slot
-            acende_led_matriz(x, y, cor);
-            printf("LED acendido na posição (%d,%d) - Slot: %s\n", x, y, slot_value);
-        }
-    }
-    
-    if (position_param)
-    {
-        position_param += 9; // Pula "position="
-        char position_value[10];
-        int i = 0;
-        while (*position_param && *position_param != '&' && *position_param != ' ' && *position_param != '\r' && *position_param != '\n' && i < 9)
-        {
-            position_value[i++] = *position_param++;
-        }
-        position_value[i] = '\0';
-        printf("Pallet clicado - Position: %s\n", position_value);
-        
-        // Apaga LED da posição
-        int x, y;
-        if (converte_posicao_para_coordenadas(position_value, &x, &y)) {
-            apaga_led_matriz(x, y);
-            printf("LED apagado na posição (%d,%d) - Position: %s\n", x, y, position_value);
-        }
-    }
-    
-    if (electromagnet_param)
-    {
-        electromagnet_param += 14; // Pula "electromagnet="
-        char electromagnet_value[10];
-        int i = 0;
-        while (*electromagnet_param && *electromagnet_param != '&' && *electromagnet_param != ' ' && *electromagnet_param != '\r' && *electromagnet_param != '\n' && i < 9)
-        {
-            electromagnet_value[i++] = *electromagnet_param++;
-        }
-        electromagnet_value[i] = '\0';
-        
-        if (strcmp(electromagnet_value, "toggle") == 0) {
-            toggle_eletroima();
-            printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
-        }
-    }
 }
 
 // Funções da matriz LED
