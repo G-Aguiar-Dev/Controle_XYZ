@@ -4,12 +4,13 @@
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
 #include "hardware/pwm.h"       // Biblioteca de PWM
-#include "hardware/pio.h"
+#include "hardware/pio.h"       // Biblioteca de PIO
 #include "lib/ssd1306.h"        // Biblioteca de display OLED
 #include "lib/font.h"           // Biblioteca de fontes
 #include "lib/HTML.h"           // Biblioteca para geração de HTML
 #include "hardware/clocks.h"
-// Inclui arquivo PIO para matriz LED
+
+// Inclui arquivo PIO para a matriz LED
 #include "pio_matrix.pio.h"
 
 #include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
@@ -22,7 +23,7 @@
 #include <stdlib.h>             // Biblioteca padrão
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
-#include <stdarg.h>
+#include <stdarg.h>            
 
 // Histórico de logs em memória
 #define LOG_CAP 120
@@ -359,7 +360,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         if (query_param(req, "slot", slot, sizeof(slot)))
         {
             printf("Armazenamento solicitado - Slot: %s\n", slot);
-            log_push("Armazenamento na posição %s solicitado", slot);
+            log_push("Armazenamento na posicao %s solicitado", slot);
             
             // Acende LED da posição do slot (verde para armazenamento)
             int x, y;
@@ -367,7 +368,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
                 uint32_t cor = 0x00FF00; // Verde para slot ocupado
                 acende_led_matriz(x, y, cor);
                 printf("LED acendido na posição (%d,%d) - Slot: %s\n", x, y, slot);
-                log_push("LED acendido na posição (%d,%d) - Slot: %s", x, y, slot);
+                log_push("LED acendido na posicao (%d,%d) - Slot: %s", x, y, slot);
             }
         }
         hs->using_smallbuf = true;
@@ -381,14 +382,14 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         if (query_param(req, "slot", slot, sizeof(slot)))
         {
             printf("Retirada solicitada - Slot: %s\n", slot);
-            log_push("Retirada da posição %s solicitada", slot);
+            log_push("Retirada da posicao %s solicitada", slot);
             
             // Apaga LED da posição
             int x, y;
             if (converte_posicao_para_coordenadas(slot, &x, &y)) {
                 apaga_led_matriz(x, y);
                 printf("LED apagado na posição (%d,%d) - Slot: %s\n", x, y, slot);
-                log_push("LED apagado na posição (%d,%d) - Slot: %s", x, y, slot);
+                log_push("LED apagado na posicao (%d,%d) - Slot: %s", x, y, slot);
             }
         }
         hs->using_smallbuf = true;
@@ -400,7 +401,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         // Processar ativação/desativação do eletroímã
         toggle_eletroima();
         printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
-        log_push("Eletroímã %s", electromagnet_active ? "ativado" : "desativado");
+        log_push("Eletroima %s", electromagnet_active ? "ativado" : "desativado");
         
         hs->using_smallbuf = true;
         hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");

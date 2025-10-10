@@ -2,11 +2,13 @@ from flask import Flask, request, jsonify
 import sqlite3
 import datetime
 import os
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Permite requisições CORS para todos os endpoints (ajuste origins se necessário)
 
 # Configuração do banco de dados
-DB_PATH = 'controle_xyz.db'
+DB_PATH = 'dbServer.db'
 
 def init_db():
     """Inicializa o banco de dados com a tabela de logs"""
