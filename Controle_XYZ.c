@@ -8,7 +8,7 @@
 #include "lib/ssd1306.h"        // Biblioteca de display OLED
 #include "lib/font.h"           // Biblioteca de fontes
 #include "lib/HTML.h"           // Biblioteca para geração de HTML
-#include "hardware/clocks.h"
+#include "hardware/clocks.h"    // Biblioteca de clocks
 
 // Inclui arquivo PIO para a matriz LED
 #include "pio_matrix.pio.h"
@@ -23,87 +23,7 @@
 #include <stdlib.h>             // Biblioteca padrão
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
-#include <stdarg.h>            
-
-// Histórico de logs em memória
-#define LOG_CAP 120
-#define LOG_LINE_MAX 128
-static char g_log[LOG_CAP][LOG_LINE_MAX];
-static int g_log_head = 0;  // aponta para a próxima posição de escrita
-static int g_log_count = 0; // quantos registros válidos
-
-static void log_push(const char *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(g_log[g_log_head], LOG_LINE_MAX, fmt, ap);
-    va_end(ap);
-
-    g_log_head = (g_log_head + 1) % LOG_CAP;
-    if (g_log_count < LOG_CAP) g_log_count++;
-}
-
-// retorna a linha i (0 = mais antiga, g_log_count-1 = mais recente)
-static const char *log_get(int idx)
-{
-    if (idx < 0 || idx >= g_log_count) return "";
-    int start = (g_log_head - g_log_count + LOG_CAP) % LOG_CAP;
-    int i = (start + idx) % LOG_CAP;
-    return g_log[i];
-}
-
-// simples utilitários para parsing de URL/query
-static int url_hex(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return -1;
-}
-
-static void url_decode_inplace(char *s) {
-    char *w = s;
-    while (*s) {
-        if (*s == '+') { *w++ = ' '; s++; }
-        else if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
-            int hi = url_hex(s[1]);
-            int lo = url_hex(s[2]);
-            if (hi >= 0 && lo >= 0) {
-                *w++ = (char)((hi << 4) | lo);
-                s += 3;
-            } else {
-                *w++ = *s++; // invalid, copy raw
-            }
-        } else {
-            *w++ = *s++;
-        }
-    }
-    *w = '\0';
-}
-
-// procura key na query string da primeira linha (após '?') e copia o valor decodificado
-static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
-    const char *q = strchr(req, '?');
-    if (!q) return false;
-    q++; // after ?
-    size_t klen = strlen(key);
-    while (*q && *q != '\r' && *q != '\n' && *q != ' ') {
-        if (strncmp(q, key, klen) == 0 && q[klen] == '=') {
-            const char *v = q + klen + 1;
-            size_t i = 0;
-            while (*v && *v != '&' && *v != ' ' && *v != '\r' && *v != '\n') {
-                if (i + 1 < outsz) out[i++] = *v;
-                v++;
-            }
-            out[i] = '\0';
-            url_decode_inplace(out);
-            return true;
-        }
-        // skip to next param
-        while (*q && *q != '&' && *q != ' ' && *q != '\r' && *q != '\n') q++;
-        if (*q == '&') q++;
-    }
-    return false;
-}
+#include <stdarg.h>             // Biblioteca para manipulação de argumentos variáveis
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
@@ -118,8 +38,7 @@ static bool query_param(const char *req, const char *key, char *out, size_t outs
 #define MATRIZ_ALTURA 5
 
 // Configurações do eletroímã
-#define ELECTROMAGNET_PIN 13
-#define ELECTROMAGNET_LED_PIN 13  // LED no mesmo pino do eletroímã
+#define ELECTROMAGNET_PIN 13    // LED no mesmo pino do eletroímã
 
 struct http_state // Struct para manter o estado da conexão HTTP
 {
@@ -131,6 +50,13 @@ struct http_state // Struct para manter o estado da conexão HTTP
     bool using_smallbuf;
 };
 
+// Histórico de logs em memória
+#define LOG_CAP 120
+#define LOG_LINE_MAX 128
+static char g_log[LOG_CAP][LOG_LINE_MAX];
+static int g_log_head = 0;  // aponta para a próxima posição de escrita
+static int g_log_count = 0; // quantos registros válidos
+
 // Variáveis da matriz LED
 static uint32_t matriz_leds[NUM_PIXELS];
 PIO pio = pio0;
@@ -141,20 +67,15 @@ static bool electromagnet_active = false;
 
 //---------------------------------------FUNÇÕES---------------------------------------
 
-// Função para enviar o próximo pedaço de resposta se houver espaço na janela
+// Funções do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
-
-// Função de callback para enviar dados HTTP
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
-
-// Função de callback para receber dados HTTP
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
-
-// Função de callback para aceitar conexões
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
-
-// Função para iniciar o servidor HTTP
 static void start_http_server(void);
+static int url_hex(char c);
+static void url_decode_inplace(char *s);
+static bool query_param(const char *req, const char *key, char *out, size_t outsz);
 
 // Funções da matriz LED
 static int coordenada_para_indice(int x, int y);
@@ -169,6 +90,10 @@ static void inicializa_eletroima(void);
 static void ativar_eletroima(void);
 static void desativar_eletroima(void);
 static void toggle_eletroima(void);
+
+// Funções de log
+static void log_push(const char *fmt, ...);
+static const char *log_get(int idx);
 
 //----------------------------------------TASKS----------------------------------------
 
@@ -224,6 +149,8 @@ int main()
 }
 
 //---------------------------------DECLARAÇÃO DAS FUNÇÕES-----------------------------
+
+// Funções Servidor HTTP
 
 #define CHUNK_SIZE 1024
 
@@ -449,6 +376,59 @@ static void start_http_server(void)
     printf("Servidor HTTP rodando na porta 80...\n");
 }
 
+// simples utilitários para parsing de URL/query
+static int url_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+static void url_decode_inplace(char *s) {
+    char *w = s;
+    while (*s) {
+        if (*s == '+') { *w++ = ' '; s++; }
+        else if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
+            int hi = url_hex(s[1]);
+            int lo = url_hex(s[2]);
+            if (hi >= 0 && lo >= 0) {
+                *w++ = (char)((hi << 4) | lo);
+                s += 3;
+            } else {
+                *w++ = *s++; // invalid, copy raw
+            }
+        } else {
+            *w++ = *s++;
+        }
+    }
+    *w = '\0';
+}
+
+// Procura key na query string da primeira linha (após '?') e copia o valor decodificado
+static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
+    const char *q = strchr(req, '?');
+    if (!q) return false;
+    q++; // after ?
+    size_t klen = strlen(key);
+    while (*q && *q != '\r' && *q != '\n' && *q != ' ') {
+        if (strncmp(q, key, klen) == 0 && q[klen] == '=') {
+            const char *v = q + klen + 1;
+            size_t i = 0;
+            while (*v && *v != '&' && *v != ' ' && *v != '\r' && *v != '\n') {
+                if (i + 1 < outsz) out[i++] = *v;
+                v++;
+            }
+            out[i] = '\0';
+            url_decode_inplace(out);
+            return true;
+        }
+        // skip to next param
+        while (*q && *q != '&' && *q != ' ' && *q != '\r' && *q != '\n') q++;
+        if (*q == '&') q++;
+    }
+    return false;
+}
+
 // Funções da matriz LED
 
 // Converte coordenada (x,y) para índice do LED no array
@@ -566,4 +546,24 @@ static void toggle_eletroima(void) {
     } else {
         ativar_eletroima();
     }
+}
+
+static void log_push(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_log[g_log_head], LOG_LINE_MAX, fmt, ap);
+    va_end(ap);
+
+    g_log_head = (g_log_head + 1) % LOG_CAP;
+    if (g_log_count < LOG_CAP) g_log_count++;
+}
+
+// retorna a linha i (0 = mais antiga, g_log_count-1 = mais recente)
+static const char *log_get(int idx)
+{
+    if (idx < 0 || idx >= g_log_count) return "";
+    int start = (g_log_head - g_log_count + LOG_CAP) % LOG_CAP;
+    int i = (start + idx) % LOG_CAP;
+    return g_log[i];
 }
