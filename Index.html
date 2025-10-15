@@ -378,148 +378,173 @@
     <script>
         let historyLog = [];
         document.addEventListener('DOMContentLoaded', function () {
-            const rackCells = document.querySelectorAll('.rack-cell');
-            const popupOverlay = document.getElementById('popup-overlay');
-            const popupTitle = document.getElementById('popup-title');
-            const popupMessage = document.getElementById('popup-message');
-            const confirmButton = document.getElementById('popup-confirm-btn');
-            const cancelButton = document.getElementById('popup-cancel-btn');
-            const electromagnetBtn = document.getElementById('electromagnet-toggle-btn');
-            const electromagnetStatus = document.getElementById('electromagnet-status');
-            const storeButton = document.querySelector('#store-form button');
-            const filterForm = document.getElementById('history-filter-form');
+    // Seletores de elementos (sem alterações)
+    const rackCells = document.querySelectorAll('.rack-cell');
+    const popupOverlay = document.getElementById('popup-overlay');
+    const popupTitle = document.getElementById('popup-title');
+    const popupMessage = document.getElementById('popup-message');
+    const confirmButton = document.getElementById('popup-confirm-btn');
+    const cancelButton = document.getElementById('popup-cancel-btn');
+    const electromagnetBtn = document.getElementById('electromagnet-toggle-btn');
+    const electromagnetStatus = document.getElementById('electromagnet-status');
+    const storeButton = document.querySelector('#store-form button');
+    const filterForm = document.getElementById('history-filter-form');
+    const logContainer = document.getElementById('log-container');
 
-            let currentSlot = null;
-            let currentAction = ''; // 'store' ou 'retrieve'
-            let isStorageModeActive = false;
-            let electromagnetActive = false;
+    // Variáveis de estado (sem alterações)
+    let currentSlot = null;
+    let currentAction = '';
+    let isStorageModeActive = false;
+    let electromagnetActive = false;
+    let historyLog = [];
 
-            initializeHistory();
+    // --- LÓGICA DE EVENTOS ---
 
-            rackCells.forEach(cell => {
-                cell.addEventListener('click', function () {
-                    currentSlot = this.getAttribute('data-position');
-
-                    if (this.classList.contains('occupied')) {
-                        currentAction = 'retrieve';
-                        popupTitle.textContent = 'Confirmar Remoção';
-                        popupMessage.innerHTML = `Deseja remover o pallet da posição <strong>${currentSlot}</strong>?`;
-                        popupOverlay.style.display = 'flex';
-                    } else {
-                        if (isStorageModeActive) {
-                            currentAction = 'store';
-                            popupTitle.textContent = 'Confirmar Armazenamento';
-                            popupMessage.innerHTML = `Deseja armazenar um pallet na posição <strong>${currentSlot}</strong>?`;
-                            popupOverlay.style.display = 'flex';
-                        } else {
-                            addToHistory("Aviso: Para armazenar, ative o modo 'Iniciar Armazenamento' primeiro.");
-                        }
-                    }
-                });
-            });
-
-            storeButton.addEventListener('click', function () {
-                isStorageModeActive = !isStorageModeActive;
-
+    rackCells.forEach(cell => {
+        cell.addEventListener('click', function () {
+            currentSlot = this.getAttribute('data-position');
+            if (this.classList.contains('occupied')) {
+                currentAction = 'retrieve';
+                popupTitle.textContent = 'Confirmar Remoção';
+                popupMessage.innerHTML = `Deseja remover o pallet da posição <strong>${currentSlot}</strong>?`;
+                popupOverlay.style.display = 'flex';
+            } else {
                 if (isStorageModeActive) {
-                    this.textContent = 'Encerrar Armazenamento';
-                    this.classList.add('storage-active');
-                    addToHistory("Modo de armazenamento ATIVADO.");
+                    currentAction = 'store';
+                    popupTitle.textContent = 'Confirmar Armazenamento';
+                    popupMessage.innerHTML = `Deseja armazenar um pallet na posição <strong>${currentSlot}</strong>?`;
+                    popupOverlay.style.display = 'flex';
                 } else {
-                    this.textContent = 'Iniciar Armazenamento';
-                    this.classList.remove('storage-active');
-                    addToHistory("Modo de armazenamento ENCERRADO.");
+                    addToLocalHistory("Aviso: Para armazenar, ative o modo 'Iniciar Armazenamento' primeiro.");
                 }
-            });
-
-            confirmButton.addEventListener('click', function () {
-                if (currentSlot && currentAction) {
-                    const cellElement = document.querySelector(`[data-position="${currentSlot}"]`);
-
-                    if (currentAction === 'retrieve') {
-                        if (cellElement) cellElement.classList.remove('occupied');
-                        fetch(`/retrieve?slot=${currentSlot}`, { method: 'POST' }).then(handleResponse).catch(handleError);
-                        addToHistory(`Retirada da posição ${currentSlot} solicitada.`);
-
-                    } else if (currentAction === 'store') {
-                        if (cellElement) cellElement.classList.add('occupied');
-                        fetch(`/store?slot=${currentSlot}`, { method: 'POST' }).then(handleResponse).catch(handleError);
-                        addToHistory(`Armazenamento na posição ${currentSlot} solicitado.`);
-                    }
-                }
-                closePopup();
-            });
-
-            function handleResponse(response) {
-                if (!response.ok) {
-                    addToHistory(`ERRO na operação em ${currentSlot}.`);
-                    const cellElement = document.querySelector(`[data-position="${currentSlot}"]`);
-                    if (cellElement) cellElement.classList.toggle('occupied');
-                }
-            }
-
-            function handleError(error) {
-                console.error('Erro de conexão:', error);
-                addToHistory(`ERRO de conexão na operação em ${currentSlot}.`);
-                const cellElement = document.querySelector(`[data-position="${currentSlot}"]`);
-                if (cellElement) cellElement.classList.toggle('occupied');
-            }
-
-            function closePopup() {
-                popupOverlay.style.display = 'none';
-                // Ações de reset, mas SEM desativar o modo de armazenamento
-                currentSlot = null;
-                currentAction = '';
-            }
-
-            cancelButton.addEventListener('click', closePopup);
-            popupOverlay.addEventListener('click', function (e) {
-                if (e.target === popupOverlay) {
-                    closePopup();
-                }
-            });
-
-            electromagnetBtn.addEventListener('click', function () {
-                fetch('/toggle-electromagnet', { method: 'POST' })
-                    .then(response => {
-                        if (response.ok) {
-                            electromagnetActive = !electromagnetActive;
-                            const newStatus = electromagnetActive ? 'Ativado' : 'Desativado';
-                            electromagnetStatus.textContent = newStatus;
-                            electromagnetBtn.textContent = electromagnetActive ? 'Desativar Eletroímã' : 'Ativar Eletroímã';
-                            addToHistory(`Eletroímã ${newStatus.toLowerCase()}.`);
-                        } else {
-                            addToHistory('ERRO: Falha ao comunicar com o eletroímã.');
-                        }
-                    })
-                    .catch(error => {
-                        addToHistory('ERRO: Não foi possível conectar ao servidor.');
-                        console.error('Erro de conexão:', error);
-                    });
-            });
-
-            filterForm.addEventListener('submit', function (e) { e.preventDefault(); const date = document.getElementById('filter-date').value; if (date) { addToHistory(`Filtro aplicado para data: ${date}.`); } });
-
-            function initializeHistory() { historyLog = []; }
-
-            function addToHistory(message) {
-                const now = new Date();
-                const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-                const logEntry = `${time} - ${message}`;
-                historyLog.unshift(logEntry);
-                updateHistoryDisplay();
-            }
-
-            function updateHistoryDisplay() {
-                const logContainer = document.getElementById('log-container');
-                logContainer.innerHTML = '';
-                historyLog.forEach(entry => {
-                    const p = document.createElement('p');
-                    p.textContent = entry;
-                    logContainer.appendChild(p);
-                });
             }
         });
+    });
+
+    storeButton.addEventListener('click', function () {
+        isStorageModeActive = !isStorageModeActive;
+        if (isStorageModeActive) {
+            this.textContent = 'Encerrar Armazenamento';
+            this.classList.add('storage-active');
+            addToLocalHistory("Modo de armazenamento ATIVADO.");
+        } else {
+            this.textContent = 'Iniciar Armazenamento';
+            this.classList.remove('storage-active');
+            addToLocalHistory("Modo de armazenamento ENCERRADO.");
+        }
+    });
+
+    confirmButton.addEventListener('click', function () {
+        if (!currentSlot || !currentAction) return;
+        
+        const endpoint = (currentAction === 'store') ? '/api/store' : '/api/retrieve';
+        
+        fetch(`${endpoint}?slot=${currentSlot}`, { method: 'POST' })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Falha na operação do servidor.');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(data.message);
+                const cellElement = document.querySelector(`[data-position="${currentSlot}"]`);
+                if (cellElement) {
+                    cellElement.classList.toggle('occupied', currentAction === 'store');
+                }
+                fetchLogs(); // Atualiza o histórico do servidor
+            })
+            .catch(handleError);
+
+        closePopup();
+    });
+
+    electromagnetBtn.addEventListener('click', function () {
+        fetch('/api/toggle-electromagnet', { method: 'POST' })
+            .then(response => {
+                if (!response.ok) throw new Error('Falha ao comunicar com o eletroímã.');
+                return response.json();
+            })
+            .then(data => {
+                // A resposta do Pico deveria idealmente indicar o novo estado.
+                // Por enquanto, vamos alternar o estado localmente.
+                electromagnetActive = !electromagnetActive;
+                updateElectromagnetStatus();
+                fetchLogs();
+            })
+            .catch(error => {
+                console.error('Erro de conexão:', error);
+                addToLocalHistory('ERRO: Não foi possível conectar ao servidor.');
+            });
+    });
+    
+    // **NOVO E MELHORADO**
+    filterForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        fetchLogs();
+    });
+
+    cancelButton.addEventListener('click', closePopup);
+    popupOverlay.addEventListener('click', (e) => { if (e.target === popupOverlay) closePopup(); });
+
+    // --- FUNÇÕES AUXILIARES ---
+
+    function updateElectromagnetStatus() {
+        const newStatus = electromagnetActive ? 'Ativado' : 'Desativado';
+        electromagnetStatus.textContent = newStatus;
+        electromagnetBtn.textContent = electromagnetActive ? 'Desativar Eletroímã' : 'Ativar Eletroímã';
+    }
+    
+    function closePopup() {
+        popupOverlay.style.display = 'none';
+        currentSlot = null;
+        currentAction = '';
+    }
+    
+    function handleError(error) {
+        console.error('Erro na operação:', error);
+        addToLocalHistory(`ERRO na operação em ${currentSlot || ''}. Verifique a conexão.`);
+        // Reverter a mudança visual em caso de erro
+        const cellElement = document.querySelector(`[data-position="${currentSlot}"]`);
+        if (cellElement) cellElement.classList.toggle('occupied');
+    }
+
+    function addToLocalHistory(message) {
+        const now = new Date();
+        const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+        const p = document.createElement('p');
+        p.textContent = `${time} - ${message}`;
+        logContainer.prepend(p);
+    }
+    
+    // **NOVA FUNÇÃO**
+    function fetchLogs() {
+        const date = document.getElementById('filter-date').value;
+        let url = '/api/logs';
+        if (date) {
+            url += `?date=${date}`;
+        }
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                logContainer.innerHTML = '';
+                data.forEach(log => {
+                    const p = document.createElement('p');
+                    const timestamp = new Date(log.timestamp).toLocaleString('pt-BR');
+                    p.textContent = `${timestamp} - ${log.message}`;
+                    logContainer.appendChild(p);
+                });
+            })
+            .catch(error => {
+                console.error('Erro ao buscar histórico:', error);
+                logContainer.innerHTML = '<p>ERRO: Falha ao carregar histórico do servidor.</p>';
+            });
+    }
+
+    // Inicialização
+    fetchLogs(); // Carrega o histórico inicial ao carregar a página
+});
     </script>
 </body>
 
