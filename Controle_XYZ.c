@@ -4,12 +4,13 @@
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
 #include "hardware/pwm.h"       // Biblioteca de PWM
-#include "hardware/pio.h"
+#include "hardware/pio.h"       // Biblioteca de PIO
 #include "lib/ssd1306.h"        // Biblioteca de display OLED
 #include "lib/font.h"           // Biblioteca de fontes
 #include "lib/HTML.h"           // Biblioteca para geração de HTML
-#include "hardware/clocks.h"
-// Inclui arquivo PIO para matriz LED
+#include "hardware/clocks.h"    // Biblioteca de clocks
+
+// Inclui arquivo PIO para a matriz LED
 #include "pio_matrix.pio.h"
 
 #include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
@@ -22,12 +23,12 @@
 #include <stdlib.h>             // Biblioteca padrão
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
-
-//-----------------------------------------HTML----------------------------------------
+#include <stdarg.h>             // Biblioteca para manipulação de argumentos variáveis
 
 //----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
 #define WIFI_SSID ""                    // Nome da rede Wi-Fi
+
 #define WIFI_PASS ""                   // Senha da rede Wi-Fi
 
 // Configurações da matriz WS2812
@@ -37,16 +38,28 @@
 #define MATRIZ_ALTURA 5
 
 // Configurações do eletroímã
-#define ELECTROMAGNET_PIN 13
-#define ELECTROMAGNET_LED_PIN 13  // LED no mesmo pino do eletroímã
+#define ELECTROMAGNET_PIN 13    // LED no mesmo pino do eletroímã
+
+// Configurações dos botões
+#define BUTTON_A_PIN 5
+#define BUTTON_B_PIN 6
 
 struct http_state                               // Struct para manter o estado da conexão HTTP
 {
-    char response[32768]; // 32KB - tamanho para HTML completo
-    size_t len;
+    const char *response_ptr;   // ponteiro para o buffer com a resposta
+    char smallbuf[1024];        // usado para respostas pequenas/JSON
+    size_t len;                 // tamanho total da resposta
     size_t sent;
     size_t offset; // bytes já enfileirados para envio
+    bool using_smallbuf;
 };
+
+// Histórico de logs em memória
+#define LOG_CAP 120
+#define LOG_LINE_MAX 128
+static char g_log[LOG_CAP][LOG_LINE_MAX];
+static int g_log_head = 0;  // aponta para a próxima posição de escrita
+static int g_log_count = 0; // quantos registros válidos
 
 // Variáveis da matriz LED
 static uint32_t matriz_leds[NUM_PIXELS];
@@ -56,25 +69,24 @@ uint sm;
 // Variáveis do eletroímã
 static bool electromagnet_active = false;
 
+// Variáveis de controle manual
+static int current_position = 0;  // Posição atual (0-24)
+static bool led_states[25] = {false};  // Estado de cada LED (false = apagado, true = aceso)
+static bool button_a_pressed = false;
+static bool button_b_pressed = false;
+static uint32_t last_button_time = 0;
+
 //---------------------------------------FUNÇÕES---------------------------------------
 
-// Função para enviar o próximo pedaço de resposta se houver espaço na janela
+// Funções do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
-
-// Função de callback para enviar dados HTTP
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
-
-// Função de callback para receber dados HTTP
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
-
-// Função de callback para aceitar conexões
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
-
-// Função para iniciar o servidor HTTP
 static void start_http_server(void);
-
-// Função para extrair parâmetros da URL
-static void extract_url_parameters(char *request);
+static int url_hex(char c);
+static void url_decode_inplace(char *s);
+static bool query_param(const char *req, const char *key, char *out, size_t outsz);
 
 // Funções da matriz LED
 static int coordenada_para_indice(int x, int y);
@@ -90,6 +102,16 @@ static void ativar_eletroima(void);
 static void desativar_eletroima(void);
 static void toggle_eletroima(void);
 
+// Funções de log
+static void log_push(const char *fmt, ...);
+static const char *log_get(int idx);
+
+// Funções de controle manual
+static void inicializa_botoes(void);
+static void processa_botoes(void);
+static void atualiza_display_manual(void);
+static int indice_para_coordenadas(int indice, int *x, int *y);
+
 //----------------------------------------TASKS----------------------------------------
 
 // Task de polling para manter a conexão Wi-Fi ativa
@@ -99,6 +121,16 @@ void vPollingTask(void *pvParameters)
     {
         cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexão ativa
         vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
+    }
+}
+
+// Task para controle manual dos botões
+void vButtonControlTask(void *pvParameters)
+{
+    while (true)
+    {
+        processa_botoes();
+        vTaskDelay(50);  // Aguarda 50ms antes de verificar novamente
     }
 }
 
@@ -135,26 +167,33 @@ int main()
 
     inicializa_matriz_led();                        // Inicializa matriz LED
     inicializa_eletroima();                         // Inicializa eletroímã
+    inicializa_botoes();                            // Inicializa botões
+    atualiza_display_manual();                      // Inicializa display manual
     start_http_server();                            // Inicia o servidor HTTP
 
     // Tasks
-    xTaskCreate(vPollingTask, "Polling Task", 256, NULL, 1, NULL);
+    xTaskCreate(vPollingTask, "Polling Task", 512, NULL, 1, NULL);
+    xTaskCreate(vButtonControlTask, "Button Control Task", 512, NULL, 2, NULL);
     vTaskStartScheduler();
     panic_unsupported();
 }
 
 //---------------------------------DECLARAÇÃO DAS FUNÇÕES-----------------------------
 
+// Funções Servidor HTTP
+
 #define CHUNK_SIZE 1024
 
 // Função para enviar o próximo pedaço de resposta se houver espaço na janela
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
 {
-    if (hs->offset >= hs->len) return;
+    if (hs->offset >= hs->len)
+        return;
     size_t remaining = hs->len - hs->offset;
     size_t to_send = remaining > CHUNK_SIZE ? CHUNK_SIZE : remaining;
-    if (tcp_sndbuf(tpcb) < to_send) return; // Aguardar janela
-    err_t err = tcp_write(tpcb, hs->response + hs->offset, to_send, TCP_WRITE_FLAG_COPY);
+    if (tcp_sndbuf(tpcb) < to_send)
+        return; // Aguardar janela
+    err_t err = tcp_write(tpcb, hs->response_ptr + hs->offset, to_send, TCP_WRITE_FLAG_COPY);
     if (err == ERR_OK)
     {
         hs->offset += to_send;
@@ -194,11 +233,22 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     tcp_recved(tpcb, p->tot_len);
 
-    char *req = (char *)p->payload;
-    
-    // Extrai parâmetros da URL e mostra na serial
-    extract_url_parameters(req);
-    
+    #define REQ_BUF_SZ 2048
+    char reqbuf[REQ_BUF_SZ];
+    size_t tocopy = p->tot_len < (REQ_BUF_SZ - 1) ? p->tot_len : (REQ_BUF_SZ - 1);
+    size_t copied = 0;
+    struct pbuf *q;
+    for (q = p; q != NULL && copied < tocopy; q = q->next)
+    {
+        size_t chunk = q->len;
+        if (chunk > tocopy - copied)
+            chunk = tocopy - copied;
+        memcpy(reqbuf + copied, q->payload, chunk);
+        copied += chunk;
+    }
+    reqbuf[copied] = '\0';
+    char *req = reqbuf;
+
     struct http_state *hs = malloc(sizeof(struct http_state));
     if (!hs)
     {
@@ -208,66 +258,122 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     hs->sent = 0;
     hs->offset = 0;
+    hs->using_smallbuf = false;
+    hs->response_ptr = NULL;
 
-    // Endpoint JSON para /web
-    if (strstr(req, "GET /web"))
+    // PROCESSAMENTO DAS ROTAS HTTP
+    if (strstr(req, "GET /api/log?"))
     {
-        char json[256];
-        int jsonlen = snprintf(json, sizeof(json),
-            "{\""); //Conteúdo do JSON
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "%s",
-            jsonlen, json);
-        tcp_arg(tpcb, hs);
-        tcp_sent(tpcb, http_sent);
-        send_next_chunk(tpcb, hs);
-        pbuf_free(p);
-        return ERR_OK;
-    }
-    
-    // Endpoint JSON para /electromagnet-status
-    if (strstr(req, "GET /electromagnet-status"))
-    {
-        char json[128];
-        int jsonlen = snprintf(json, sizeof(json),
-            "{\"active\":%s,\"status\":\"%s\"}",
-            electromagnet_active ? "true" : "false",
-            electromagnet_active ? "Ativado" : "Desativado");
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "%s",
-            jsonlen, json);
-        tcp_arg(tpcb, hs);
-        tcp_sent(tpcb, http_sent);
-        send_next_chunk(tpcb, hs);
-        pbuf_free(p);
-        return ERR_OK;
-    }
-
-    else
-    {
-        preencher_html();
-        
-        hs->len = strlen(html);
-        if (hs->len >= sizeof(hs->response)) {
-            hs->len = sizeof(hs->response) - 1;
+        char msg[256];
+        if (query_param(req, "msg", msg, sizeof(msg)))
+        {
+            log_push("%s", msg);
         }
-        memcpy(hs->response, html, hs->len);
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else if (strstr(req, "GET /api/history"))
+    {
+        size_t off = 0;
+        off += snprintf(hs->smallbuf + off, sizeof(hs->smallbuf) - off,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[");
+        for (int i = 0; i < g_log_count; i++)
+        {
+            const char *ln = log_get(i);
+            char esc[LOG_LINE_MAX * 2];
+            size_t j = 0;
+            for (size_t k = 0; k < strlen(ln) && j + 2 < sizeof(esc); k++)
+            {
+                if (ln[k] == '"' || ln[k] == '\\')
+                {
+                    esc[j++] = '\\';
+                    esc[j++] = ln[k];
+                }
+                else if ((unsigned char)ln[k] < 0x20)
+                {
+                    esc[j++] = ' ';
+                }
+                else
+                {
+                    esc[j++] = ln[k];
+                }
+            }
+            esc[j] = '\0';
+            off += snprintf(hs->smallbuf + off, sizeof(hs->smallbuf) - off,
+                            "%s\"%s\"", (i ? "," : ""), esc);
+            if (off >= sizeof(hs->smallbuf) - 4)
+                break;
+        }
+        off += snprintf(hs->smallbuf + off, sizeof(hs->smallbuf) - off, "]");
+        hs->len = off;
+        hs->response_ptr = hs->smallbuf;
+        hs->using_smallbuf = true;
+    }
+    else if (strstr(req, "POST /store?"))
+    {
+        // Processar armazenamento de pallet
+        char slot[10];
+        if (query_param(req, "slot", slot, sizeof(slot)))
+        {
+            printf("Armazenamento solicitado - Slot: %s\n", slot);
+            log_push("Armazenamento na posicao %s solicitado", slot);
+            
+            // Acende LED da posição do slot (verde para armazenamento)
+            int x, y;
+            if (converte_posicao_para_coordenadas(slot, &x, &y)) {
+                uint32_t cor = 0x00FF00; // Verde para slot ocupado
+                acende_led_matriz(x, y, cor);
+                printf("LED acendido na posição (%d,%d) - Slot: %s\n", x, y, slot);
+                log_push("LED acendido na posicao (%d,%d) - Slot: %s", x, y, slot);
+            }
+        }
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else if (strstr(req, "POST /retrieve?"))
+    {
+        // Processar retirada de pallet
+        char slot[10];
+        if (query_param(req, "slot", slot, sizeof(slot)))
+        {
+            printf("Retirada solicitada - Slot: %s\n", slot);
+            log_push("Retirada da posicao %s solicitada", slot);
+            
+            // Apaga LED da posição
+            int x, y;
+            if (converte_posicao_para_coordenadas(slot, &x, &y)) {
+                apaga_led_matriz(x, y);
+                printf("LED apagado na posição (%d,%d) - Slot: %s\n", x, y, slot);
+                log_push("LED apagado na posicao (%d,%d) - Slot: %s", x, y, slot);
+            }
+        }
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else if (strstr(req, "POST /toggle-electromagnet"))
+    {
+        // Processar ativação/desativação do eletroímã
+        toggle_eletroima();
+        printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
+        log_push("Eletroima %s", electromagnet_active ? "ativado" : "desativado");
+        
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else
+    { // Rota padrão (página principal)
+        preencher_html();
+        hs->response_ptr = html; // apontar para buffer global
+        hs->len = strlen(html);
+        hs->using_smallbuf = false;
     }
 
     tcp_arg(tpcb, hs);
     tcp_sent(tpcb, http_sent);
-
-    // inicia envio por fatias
     send_next_chunk(tpcb, hs);
 
     pbuf_free(p);
@@ -300,70 +406,57 @@ static void start_http_server(void)
     printf("Servidor HTTP rodando na porta 80...\n");
 }
 
-// Função para extrair parâmetros da URL
-static void extract_url_parameters(char *request)
-{
-    char *slot_param = strstr(request, "slot=");
-    char *position_param = strstr(request, "position=");
-    char *electromagnet_param = strstr(request, "electromagnet=");
-    
-    if (slot_param)
-    {
-        slot_param += 5; // Pula "slot="
-        char slot_value[10];
-        int i = 0;
-        while (*slot_param && *slot_param != '&' && *slot_param != ' ' && *slot_param != '\r' && *slot_param != '\n' && i < 9)
-        {
-            slot_value[i++] = *slot_param++;
-        }
-        slot_value[i] = '\0';
-        printf("Pallet clicado - Slot: %s\n", slot_value);
-        
-        // Acende LED da posição do slot
-        int x, y;
-        if (converte_posicao_para_coordenadas(slot_value, &x, &y)) {
-            uint32_t cor = 0x00FF00; // Verde para slot
-            acende_led_matriz(x, y, cor);
-            printf("LED acendido na posição (%d,%d) - Slot: %s\n", x, y, slot_value);
+// simples utilitários para parsing de URL/query
+static int url_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+static void url_decode_inplace(char *s) {
+    char *w = s;
+    while (*s) {
+        if (*s == '+') { *w++ = ' '; s++; }
+        else if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
+            int hi = url_hex(s[1]);
+            int lo = url_hex(s[2]);
+            if (hi >= 0 && lo >= 0) {
+                *w++ = (char)((hi << 4) | lo);
+                s += 3;
+            } else {
+                *w++ = *s++; // invalid, copy raw
+            }
+        } else {
+            *w++ = *s++;
         }
     }
-    
-    if (position_param)
-    {
-        position_param += 9; // Pula "position="
-        char position_value[10];
-        int i = 0;
-        while (*position_param && *position_param != '&' && *position_param != ' ' && *position_param != '\r' && *position_param != '\n' && i < 9)
-        {
-            position_value[i++] = *position_param++;
+    *w = '\0';
+}
+
+// Procura key na query string da primeira linha (após '?') e copia o valor decodificado
+static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
+    const char *q = strchr(req, '?');
+    if (!q) return false;
+    q++; // after ?
+    size_t klen = strlen(key);
+    while (*q && *q != '\r' && *q != '\n' && *q != ' ') {
+        if (strncmp(q, key, klen) == 0 && q[klen] == '=') {
+            const char *v = q + klen + 1;
+            size_t i = 0;
+            while (*v && *v != '&' && *v != ' ' && *v != '\r' && *v != '\n') {
+                if (i + 1 < outsz) out[i++] = *v;
+                v++;
+            }
+            out[i] = '\0';
+            url_decode_inplace(out);
+            return true;
         }
-        position_value[i] = '\0';
-        printf("Pallet clicado - Position: %s\n", position_value);
-        
-        // Apaga LED da posição
-        int x, y;
-        if (converte_posicao_para_coordenadas(position_value, &x, &y)) {
-            apaga_led_matriz(x, y);
-            printf("LED apagado na posição (%d,%d) - Position: %s\n", x, y, position_value);
-        }
+        // skip to next param
+        while (*q && *q != '&' && *q != ' ' && *q != '\r' && *q != '\n') q++;
+        if (*q == '&') q++;
     }
-    
-    if (electromagnet_param)
-    {
-        electromagnet_param += 14; // Pula "electromagnet="
-        char electromagnet_value[10];
-        int i = 0;
-        while (*electromagnet_param && *electromagnet_param != '&' && *electromagnet_param != ' ' && *electromagnet_param != '\r' && *electromagnet_param != '\n' && i < 9)
-        {
-            electromagnet_value[i++] = *electromagnet_param++;
-        }
-        electromagnet_value[i] = '\0';
-        
-        if (strcmp(electromagnet_value, "toggle") == 0) {
-            toggle_eletroima();
-            printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
-        }
-    }
+    return false;
 }
 
 // Funções da matriz LED
@@ -454,7 +547,8 @@ static int converte_posicao_para_coordenadas(char *posicao, int *x, int *y) {
 // Funções do eletroímã
 
 // Inicializa o eletroímã
-static void inicializa_eletroima(void) {
+static void inicializa_eletroima(void)
+{
     gpio_init(ELECTROMAGNET_PIN);
     gpio_set_dir(ELECTROMAGNET_PIN, GPIO_OUT);
     gpio_put(ELECTROMAGNET_PIN, 0); // Inicia desativado
@@ -463,24 +557,139 @@ static void inicializa_eletroima(void) {
 }
 
 // Ativa o eletroímã
-static void ativar_eletroima(void) {
+static void ativar_eletroima(void)
+{
     gpio_put(ELECTROMAGNET_PIN, 1);
     electromagnet_active = true;
     printf("Eletroímã ativado\n");
 }
 
 // Desativa o eletroímã
-static void desativar_eletroima(void) {
+static void desativar_eletroima(void)
+{
     gpio_put(ELECTROMAGNET_PIN, 0);
     electromagnet_active = false;
     printf("Eletroímã desativado\n");
 }
 
 // Alterna o estado do eletroímã
-static void toggle_eletroima(void) {
+static void toggle_eletroima(void)
+{
     if (electromagnet_active) {
         desativar_eletroima();
     } else {
         ativar_eletroima();
     }
+}
+
+static void log_push(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_log[g_log_head], LOG_LINE_MAX, fmt, ap);
+    va_end(ap);
+
+    g_log_head = (g_log_head + 1) % LOG_CAP;
+    if (g_log_count < LOG_CAP) g_log_count++;
+}
+
+// retorna a linha i (0 = mais antiga, g_log_count-1 = mais recente)
+static const char *log_get(int idx)
+{
+    if (idx < 0 || idx >= g_log_count) return "";
+    int start = (g_log_head - g_log_count + LOG_CAP) % LOG_CAP;
+    int i = (start + idx) % LOG_CAP;
+    return g_log[i];
+}
+
+// Funções de controle manual
+
+// Inicializa os botões
+static void inicializa_botoes(void) {
+    gpio_init(BUTTON_A_PIN);
+    gpio_set_dir(BUTTON_A_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_A_PIN);
+    
+    gpio_init(BUTTON_B_PIN);
+    gpio_set_dir(BUTTON_B_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_B_PIN);
+    
+    printf("Botões inicializados - A: GPIO %d, B: GPIO %d\n", BUTTON_A_PIN, BUTTON_B_PIN);
+}
+
+// Converte índice (0-24) para coordenadas (x,y)
+static int indice_para_coordenadas(int indice, int *x, int *y) {
+    if (indice < 0 || indice >= NUM_PIXELS) {
+        *x = -1;
+        *y = -1;
+        return 0;
+    }
+    
+    *y = indice / MATRIZ_LARGURA;
+    *x = indice % MATRIZ_LARGURA;
+    
+    // Aplica o padrão zigzag da matriz
+    if (*y % 2 == 1) {
+        *x = MATRIZ_LARGURA - 1 - *x;
+    }
+    
+    return 1;
+}
+
+// Atualiza o display com o estado atual
+static void atualiza_display_manual(void) {
+    // Limpa toda a matriz
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        matriz_leds[i] = 0x000000;
+    }
+    
+    // Desenha LEDs acesos
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        if (led_states[i]) {
+            int x, y;
+            if (indice_para_coordenadas(i, &x, &y)) {
+                matriz_leds[i] = 0x00FF00; // Verde para LEDs acesos
+            }
+        }
+    }
+    
+    // Desenha posição atual em azul
+    int x, y;
+    if (indice_para_coordenadas(current_position, &x, &y)) {
+        matriz_leds[current_position] = 0x0000FF; // Azul para posição atual
+    }
+    
+    atualiza_matriz();
+}
+
+// Processa os botões
+static void processa_botoes(void) {
+    uint32_t current_time = to_ms_since_boot(get_absolute_time());
+    
+    // Debounce - evita múltiplas leituras em pouco tempo
+    if (current_time - last_button_time < 200) {
+        return;
+    }
+    
+    bool button_a_current = !gpio_get(BUTTON_A_PIN); // Invertido devido ao pull-up
+    bool button_b_current = !gpio_get(BUTTON_B_PIN);
+    
+    // Botão A - navegação
+    if (button_a_current && !button_a_pressed) {
+        current_position = (current_position + 1) % NUM_PIXELS;
+        printf("Posição atual: %d\n", current_position);
+        atualiza_display_manual();
+        last_button_time = current_time;
+    }
+    button_a_pressed = button_a_current;
+    
+    // Botão B - toggle LED
+    if (button_b_current && !button_b_pressed) {
+        led_states[current_position] = !led_states[current_position];
+        printf("LED posição %d: %s\n", current_position, 
+               led_states[current_position] ? "ACESO" : "APAGADO");
+        atualiza_display_manual();
+        last_button_time = current_time;
+    }
+    button_b_pressed = button_b_current;
 }
