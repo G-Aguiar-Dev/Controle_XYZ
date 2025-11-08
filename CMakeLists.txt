@@ -20,7 +20,7 @@ set(PICO_BOARD pico_w CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
 
 # Configuração do FreeRTOS
-set(FREERTOS_KERNEL_PATH "X:/FreeRTOS-Kernel")
+set(FREERTOS_KERNEL_PATH "C:/FreeRTOS-Kernel")  # Modifique este caminho conforme necessário
 include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 project(Controle_XYZ C CXX ASM)
@@ -32,7 +32,8 @@ include_directories(${CMAKE_SOURCE_DIR}
 
 add_executable(${PROJECT_NAME}  
         Controle_XYZ.c 
-        lib/ssd1306.c # Biblioteca para o display OLED
+        lib/lcd_1602_i2c.c # Biblioteca para o display LCD I2C
+        lib/mfrc522.c  # Biblioteca para o leitor RFID
         lib/HTML.c    # Biblioteca para HTML
         )
 
@@ -44,6 +45,7 @@ target_link_libraries(${PROJECT_NAME}
         hardware_i2c
         hardware_adc
         hardware_pwm
+        hardware_spi
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_mbedtls
         FreeRTOS-Kernel 
