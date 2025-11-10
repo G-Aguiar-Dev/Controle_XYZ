@@ -30,11 +30,10 @@ include_directories(${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/lib
     ${PICO_SDK_PATH})
 
-
-
 add_executable(${PROJECT_NAME}  
         Controle_XYZ.c 
-        lib/ssd1306.c # Biblioteca para o display OLED
+        lib/lcd_1602_i2c.c # Biblioteca para o display LCD I2C
+        lib/mfrc522.c  # Biblioteca para o leitor RFID
         lib/HTML.c    # Biblioteca para HTML
         )
 
@@ -46,7 +45,7 @@ target_link_libraries(${PROJECT_NAME}
         hardware_i2c
         hardware_adc
         hardware_pwm
-        hardware_pio
+        hardware_spi
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_mbedtls
         FreeRTOS-Kernel 
@@ -56,6 +55,4 @@ target_link_libraries(${PROJECT_NAME}
 pico_enable_stdio_usb(${PROJECT_NAME} 1)
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
 
-# Gera o arquivo header PIO
-pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/pio_matrix.pio)
 pico_add_extra_outputs(${PROJECT_NAME})

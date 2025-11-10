@@ -1,184 +1,260 @@
 // Bibliotecas
-#include "pico/stdlib.h"        // Biblioteca padrão do Pico
+#include "pico/stdlib.h"        // Biblioteca padrao do Pico
 #include "hardware/gpio.h"      // Biblioteca de GPIO
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
-#include "hardware/pwm.h"       // Biblioteca de PWM
-#include "hardware/pio.h"       // Biblioteca de PIO
-#include "lib/ssd1306.h"        // Biblioteca de display OLED
-#include "lib/font.h"           // Biblioteca de fontes
-#include "lib/HTML.h"           // Biblioteca para geração de HTML
-#include "hardware/clocks.h"
-
-// Inclui arquivo PIO para a matriz LED
-#include "pio_matrix.pio.h"
+#include "hardware/clocks.h"    // Biblioteca de clocks
+#include "hardware/spi.h"       // Biblioteca de SPI
 
 #include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
-#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulação de TCP/IP
+#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulacao de TCP/IP
 
 #include "FreeRTOS.h"           // Biblioteca de FreeRTOS
 #include "task.h"               // Biblioteca de tasks
+#include "queue.h"              // Biblioteca de listas
+#include "semphr.h"             // Biblioteca para Mutex/Semaforos
 
-#include <stdio.h>              // Biblioteca de entrada e saída padrão
-#include <stdlib.h>             // Biblioteca padrão
+#include "lib/HTML.h"           // Biblioteca para geracao de HTML
+#include "lib/lcd_1602_i2c.h"   // Biblioteca para Display LCD
+#include "lib/mfrc522.h"        // Biblioteca para o Sensor RFID
+
+#include <stdio.h>              // Biblioteca de entrada e saida padrao
+#include <stdlib.h>             // Biblioteca padrao
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
-#include <stdarg.h>            
+#include <stdarg.h>             // Biblioteca para manipulacao de argumentos variaveis
+#include <math.h>               // Biblioteca matematica
 
-// Histórico de logs em memória
-#define LOG_CAP 120
-#define LOG_LINE_MAX 128
-static char g_log[LOG_CAP][LOG_LINE_MAX];
-static int g_log_head = 0;  // aponta para a próxima posição de escrita
-static int g_log_count = 0; // quantos registros válidos
+//----------------------------------VaRIAVEIS GLOBAIS----------------------------------
 
-static void log_push(const char *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(g_log[g_log_head], LOG_LINE_MAX, fmt, ap);
-    va_end(ap);
+#define WIFI_SSID "Armazem XYZ"                    // Nome da rede Wi-Fi
 
-    g_log_head = (g_log_head + 1) % LOG_CAP;
-    if (g_log_count < LOG_CAP) g_log_count++;
-}
+#define WIFI_PASS "tic37#grupo4"                   // Senha da rede Wi-Fi
 
-// retorna a linha i (0 = mais antiga, g_log_count-1 = mais recente)
-static const char *log_get(int idx)
-{
-    if (idx < 0 || idx >= g_log_count) return "";
-    int start = (g_log_head - g_log_count + LOG_CAP) % LOG_CAP;
-    int i = (start + idx) % LOG_CAP;
-    return g_log[i];
-}
+// Configuracoes do eletroima
+#define ELECTROMAGNET_PIN 7    // Pino do eletroima
 
-// simples utilitários para parsing de URL/query
-static int url_hex(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return -1;
-}
+// Pinos Eixo X
+#define STEP_PIN_X 14
+#define DIR_PIN_X 15
+#define ENA_PIN_X 16
+#define ENDSTOP_PIN_X 10 
 
-static void url_decode_inplace(char *s) {
-    char *w = s;
-    while (*s) {
-        if (*s == '+') { *w++ = ' '; s++; }
-        else if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
-            int hi = url_hex(s[1]);
-            int lo = url_hex(s[2]);
-            if (hi >= 0 && lo >= 0) {
-                *w++ = (char)((hi << 4) | lo);
-                s += 3;
-            } else {
-                *w++ = *s++; // invalid, copy raw
-            }
-        } else {
-            *w++ = *s++;
-        }
-    }
-    *w = '\0';
-}
+// Pinos Eixo Y
+#define STEP_PIN_Y 1
+#define DIR_PIN_Y 2
+#define ENA_PIN_Y 0
+#define ENDSTOP_PIN_Y 11 
 
-// procura key na query string da primeira linha (após '?') e copia o valor decodificado
-static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
-    const char *q = strchr(req, '?');
-    if (!q) return false;
-    q++; // after ?
-    size_t klen = strlen(key);
-    while (*q && *q != '\r' && *q != '\n' && *q != ' ') {
-        if (strncmp(q, key, klen) == 0 && q[klen] == '=') {
-            const char *v = q + klen + 1;
-            size_t i = 0;
-            while (*v && *v != '&' && *v != ' ' && *v != '\r' && *v != '\n') {
-                if (i + 1 < outsz) out[i++] = *v;
-                v++;
-            }
-            out[i] = '\0';
-            url_decode_inplace(out);
-            return true;
-        }
-        // skip to next param
-        while (*q && *q != '&' && *q != ' ' && *q != '\r' && *q != '\n') q++;
-        if (*q == '&') q++;
-    }
-    return false;
-}
+// Pinos Eixo Z
+#define STEP_PIN_Z 21
+#define DIR_PIN_Z 22
+#define ENA_PIN_Z 20
+#define ENDSTOP_PIN_Z 12 
 
-//----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
 
-#define WIFI_SSID ""                    // Nome da rede Wi-Fi
+// Ex: (200 * 8 micro) / 8mm avanco = 200.0
+#define STEPS_PER_MM_X 50.0
+#define STEPS_PER_MM_Y 70.0
+// Ex: (200 * 8 micro) / 4mm avanco = 400.0
+#define STEPS_PER_MM_Z 50.0 
 
-#define WIFI_PASS ""                   // Senha da rede Wi-Fi
+typedef struct {
+    float x_mm;       // Posicao X (em mm) do centro da celula
+    float y_mm;       // Posicao Y (em mm) do centro da celula
+} CellPosition;
 
-// Configurações da matriz WS2812
-#define LED_PIN 7
-#define NUM_PIXELS 25
-#define MATRIZ_LARGURA 5
-#define MATRIZ_ALTURA 5
+// --- DEFINICOES DA CNC 3018 ---
+// Area de trabalho total: 300mm (X) por 180mm (Y)
+//
+// Area util X: 300mm - (2 * 25mm) = 250mm
+// Area util Y: 180mm - (2 * 25mm) = 130mm
+//
+// Tamanho da Celula X: 250mm / 3 colunas = 83.33mm
+// Tamanho da Celula Y: 130mm / 2 linhas = 65.0mm
+//
+// Offset (Margem): X=25mm, Y=25mm
+//
+// Coordenadas dos Centros das Celulas:
+// X_Col_A = 25.0 (Offset) + (83.33 / 2) = 71.67mm
+// X_Col_B = 25.0 (Offset) + 83.33 + (83.33 / 2) = 150.0mm
+// X_Col_C = 25.0 (Offset) + (2 * 83.33) + (83.33 / 2) = 233.33mm
+//
+// Y_Linha_1 = 25.0 (Offset) + (65.0 / 2) = 57.5mm
+// Y_Linha_2 = 25.0 (Offset) + 65.0 + (65.0 / 2) = 122.5mm
+//
 
-// Configurações do eletroímã
-#define ELECTROMAGNET_PIN 13
-#define ELECTROMAGNET_LED_PIN 13  // LED no mesmo pino do eletroímã
+CellPosition g_cell_map[6] = {
+    { .x_mm = 37.84, .y_mm = 18.25 },    // Celula 0 ("A1")
+    { .x_mm = 37.84, .y_mm = 53.75 },    // Celula 1 ("A2")
+    { .x_mm = 100.51, .y_mm = 18.25 },   // Celula 2 ("B1")
+    { .x_mm = 100.51, .y_mm = 53.75 },   // Celula 3 ("B2")
+    { .x_mm = 163.18, .y_mm = 18.25 },   // Celula 4 ("C1")
+    { .x_mm = 163.18, .y_mm = 53.75 }    // Celula 5 ("C2")
+};
 
-struct http_state // Struct para manter o estado da conexão HTTP
+#define Z_TRAVEL_MAX_MM 45.0    // Curso maximo fisico do Eixo Z
+#define Z_SAFE_MM 0.0           // Altura Z segura (Modificar caso precise de mais espaco)
+#define Z_PICKUP_MM 45.0        // Altura Z para pegar/soltar (45mm abaixo do topo)
+
+// Delay (em microssegundos) entre pulsos do motor. Controla a velocidade.
+#define STEP_DELAY_XY_US 800  // Delay para os eixos X e Y
+#define STEP_DELAY_Z_US 1200  // Delay mais lento para o Eixo Z
+
+// Posicao atual da maquina, em PASSOS.
+volatile long g_current_steps_x = 0;
+volatile long g_current_steps_y = 0;
+volatile long g_current_steps_z = 0;
+
+// Guarda a ultima posicao alvo (em passos) enviada para X/Y.
+volatile long g_last_target_steps_x = 0;
+volatile long g_last_target_steps_y = 0;
+
+#define I2C_PORT i2c0
+#define I2C_SDA 8
+#define I2C_SCL 9
+#define I2C_ADDR 0x27 
+
+QueueHandle_t g_movement_queue; // Fila de comandos de movimento
+
+// Estrutura do comando de movimento
+typedef struct {
+    int cell_index;             // indice da celula (0-5)
+    bool is_store_operation;    // true = guardar (soltar), false = retirar (pegar)
+} MovementCommand;
+
+struct http_state                               // Struct para manter o estado da conexao HTTP
 {
     const char *response_ptr;   // ponteiro para o buffer com a resposta
     char smallbuf[1024];        // usado para respostas pequenas/JSON
     size_t len;                 // tamanho total da resposta
     size_t sent;
-    size_t offset; // bytes já enfileirados para envio
+    size_t offset;              // bytes ja enfileirados para envio
     bool using_smallbuf;
 };
 
-// Variáveis da matriz LED
-static uint32_t matriz_leds[NUM_PIXELS];
-PIO pio = pio0;
-uint sm;
+// Historico de logs em memoria
+#define LOG_CAP 120
+#define LOG_LINE_MAX 128
+static char g_log[LOG_CAP][LOG_LINE_MAX];
+static int g_log_head = 0;  // aponta para a proxima posicao de escrita
+static int g_log_count = 0; // quantos registros validos
 
-// Variáveis do eletroímã
-static bool electromagnet_active = false;
+// Variaveis do eletroima
+bool electromagnet_active = false;
 
-//---------------------------------------FUNÇÕES---------------------------------------
+MFRC522Ptr_t g_mfrc; // Ponteiro global para a instancia do MFRC522
 
-// Função para enviar o próximo pedaço de resposta se houver espaço na janela
+#define UID_STRLEN 32 // Espaco para UID (ex: "12 34 56 78 ")
+static char g_cell_uids[6][UID_STRLEN]; // Armazena a UID de qual pallet esta em qual slot
+static SemaphoreHandle_t g_inventory_mutex; // Protege g_cell_uids
+static SemaphoreHandle_t g_lcd_mutex; // Protege g_cell_uids
+
+//---------------------------------------FUNcoES---------------------------------------
+
+// Funcoes do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
-
-// Função de callback para enviar dados HTTP
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
-
-// Função de callback para receber dados HTTP
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
-
-// Função de callback para aceitar conexões
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
-
-// Função para iniciar o servidor HTTP
 static void start_http_server(void);
+static int url_hex(char c);
+static void url_decode_inplace(char *s);
+static bool query_param(const char *req, const char *key, char *out, size_t outsz);
 
-// Funções da matriz LED
-static int coordenada_para_indice(int x, int y);
-static void atualiza_matriz(void);
-static void acende_led_matriz(int x, int y, uint32_t cor);
-static void apaga_led_matriz(int x, int y);
-static void inicializa_matriz_led(void);
-static int converte_posicao_para_coordenadas(char *posicao, int *x, int *y);
+// Funcoes para movimentacao dos eixos
+static void init_cnc_pins(void);
+static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_us);
+static void home_all_axes(void);
+static void move_axes_to_steps(long target_x, long target_y, long target_z);
+static void execute_cell_operation(int cell_index, bool is_pickup_operation);
+static int slot_para_indice(char *slot); 
+static const char* indice_para_slot(int idx);
 
-// Funções do eletroímã
+// Funcoes do eletroima
 static void inicializa_eletroima(void);
 static void ativar_eletroima(void);
 static void desativar_eletroima(void);
 static void toggle_eletroima(void);
 
+// Funcoes de log
+static void log_push(const char *fmt, ...);
+static const char *log_get(int idx);
+static bool scan_for_uid(char* uid_buffer, size_t buffer_len);
+
+// Funcoes do display LCD I2C
+void lcd_update_line(int line, const char *fmt, ...);
+
 //----------------------------------------TASKS----------------------------------------
 
-// Task de polling para manter a conexão Wi-Fi ativa
+// Task de polling para manter a conexao Wi-Fi ativa
 void vPollingTask(void *pvParameters)
 {
     while (true)
     {
-        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexão ativa
+        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexao ativa
         vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
+    }
+}
+
+// Task de controle da CNC
+void vMotorControlTask(void *pvParameters)
+{
+    printf("Motor Task iniciada. Inicializando pinos da CNC...\n");
+    init_cnc_pins();
+
+    // 1. Zera a maquina ANTES de aceitar qualquer comando
+    printf("Iniciando Homing da CNC...\n");
+    log_push("CNC: Iniciando Homing...");
+    lcd_update_line(0, "Iniciando Homing");  
+    lcd_update_line(1, "Aguarde...");        
+    
+    //home_all_axes();
+    
+    printf("Homing concluido! Maquina em (0, 0, 0).\n");
+    log_push("CNC: Homing concluido.");
+    lcd_update_line(0, "Status: Pronto");  
+    lcd_update_line(1, "");             
+
+    // Converte Z_SAFE_MM para passos
+    long z_safe_steps = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
+    
+    // 2. Move para uma posicao inicial segura
+    move_axes_to_steps(g_current_steps_x, g_current_steps_y, z_safe_steps);
+
+    MovementCommand cmd;
+
+    // 3. Loop principal: Aguarda comandos da Fila
+    while (true)
+    {
+        // Aguarda um comando da fila (vindo do http_recv)
+        if (xQueueReceive(g_movement_queue, &cmd, portMAX_DELAY) == pdPASS)
+        {
+            // Verifica se e um comando de home (cell_index == -1)
+            if (cmd.cell_index == -1) {
+                printf("Comando de HOME recebido. Retornando a (0,0,0)...\n");
+                log_push("CNC: Retornando ao home (0,0,0)");
+                lcd_update_line(0, "Retornando Home");
+                lcd_update_line(1, "Aguarde...");
+                
+                // Move para (0,0,0)
+                move_axes_to_steps(0, 0, 0);
+                
+                log_push("CNC: Home concluido (0,0,0)");
+                printf("Retorno ao home concluido.\n");
+                lcd_update_line(0, "Status: Pronto");
+                lcd_update_line(1, "Home OK");
+            } else {
+                // Comando normal de celula
+                printf("Comando recebido: Celula %d, Operacao: %s\n", 
+                       cmd.cell_index, cmd.is_store_operation ? "GUARDAR" : "RETIRAR");
+                
+                bool is_pickup = !cmd.is_store_operation;
+                
+                // 4. Chama a funcao de movimento
+                execute_cell_operation(cmd.cell_index, is_pickup);
+            }
+        }
     }
 }
 
@@ -187,47 +263,121 @@ void vPollingTask(void *pvParameters)
 int main()
 {
     stdio_init_all();
+    sleep_ms(4000); // Delay para o monitor serial conectar
 
-    sleep_ms(4000);               // Aguarda 4 segundos para inicialização
+    // --- INICIALIZA I2C E LCD ---
+    i2c_init(I2C_PORT, 100 * 1000); 
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA);
+    gpio_pull_up(I2C_SCL);
+    sleep_ms(100); 
 
-    if (cyw43_arch_init())          // Inicializa o Wi-fi
-    {
-        printf("Falha ao inicializar o módulo Wi-Fi\n");
+    lcd_init(I2C_PORT, I2C_ADDR);
+    lcd_clear();
+    lcd_set_cursor(0, 0);
+    lcd_string("Iniciando...");
+    lcd_set_cursor(1, 0);
+    lcd_string("v1.0");
+
+    // --- CRIA O MUTEX DO LCD ---
+    g_lcd_mutex = xSemaphoreCreateMutex();
+    if (g_lcd_mutex == NULL) {
+        printf("Falha ao criar Mutex do LCD!\n");
+        lcd_set_cursor(0, 0); lcd_string("ERRO FATAL");
+        lcd_set_cursor(1, 0); lcd_string("MUTEX LCD FALHOU");
+        while(true); // Trava aqui
+    }
+
+    // --- CRIA O MUTEX DO INVENTARIO ---
+    g_inventory_mutex = xSemaphoreCreateMutex();
+    if (g_inventory_mutex == NULL) {
+        printf("Falha ao criar Mutex de Inventario!\n");
+        lcd_update_line(0, "ERRO FATAL");
+        lcd_update_line(1, "MUTEX INV. FALHOU");
+        while(true);
+    }
+    // Inicializa o inventario como vazio
+    for (int i = 0; i < 6; i++) {
+        g_cell_uids[i][0] = '\0';
+    }
+
+
+    lcd_update_line(1, "Iniciando WiFi...");
+
+    // --- INICIALIZA WI-FI ---
+    if (cyw43_arch_init()) {
+        printf("Falha ao inicializar o modulo Wi-Fi\n");
+        lcd_update_line(0, "ERRO FATAL");
+        lcd_update_line(1, "WIFI INIT FALHOU");
         return 1;
     }
 
-    cyw43_arch_enable_sta_mode();   // Habilita o modo Station do Wi-Fi
+    cyw43_arch_enable_sta_mode();
+    lcd_update_line(1, "Conectando...");
 
-    // Verifica se o Wi-Fi está conectado
-    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000))
-    {
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
         printf("Falha ao conectar ao Wi-Fi\n");
+        lcd_update_line(0, "ERRO FATAL");
+        lcd_update_line(1, "WIFI CONNECT");
         return 1;
     }
 
-    // Variáveis para armazenar o endereço IP
     uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
     char ip_str[24];
     snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+    printf("Conectado ao Wi-Fi %s\n", WIFI_SSID);
+    printf("Endereco IP: %s\n", ip_str);
+    
+    // --- FEEDBACK LCD DE SUCESSO ---
+    lcd_update_line(0, "Sistema Online");
+    lcd_update_line(1, "IP: %s", ip_str); // A funcao ja trunca
+    sleep_ms(1000); // Mostra o IP por um tempo
 
-    printf("Conectado ao Wi-Fi %s\n", WIFI_SSID);   // Exibe o nome da rede Wi-Fi
-    printf("Endereço IP: %s\n", ip_str);            // Exibe o endereço IP
+    // --- INICIALIZA RFID ---
+    // (Assume que os pinos SPI, CS, RST estao definidos em lib/mfrc522.h)
+    printf("Inicializando leitor RFID MFRC522...\n");
+    lcd_update_line(1, "Iniciando RFID...");
+    
+    g_mfrc = MFRC522_Init();
+    PCD_Init(g_mfrc, spi0); // Usa spi0 como no seu exemplo
+    
+    printf("RFID MFRC522: ");
+    PCD_DumpVersionToSerial(g_mfrc); // Imprime a versao do firmware no console
+    
+    lcd_update_line(1, "RFID OK.");
+    sleep_ms(500);
 
-    inicializa_matriz_led();                        // Inicializa matriz LED
-    inicializa_eletroima();                         // Inicializa eletroímã
-    start_http_server();                            // Inicia o servidor HTTP
 
-    // Tasks
+    inicializa_eletroima();
+    start_http_server();
+
+    // Cria a fila para 5 comandos de movimento
+    g_movement_queue = xQueueCreate(5, sizeof(MovementCommand)); 
+    if (g_movement_queue == NULL) {
+         printf("Falha ao criar a Fila de Movimento!\n");
+         lcd_update_line(0, "ERRO FATAL");
+         lcd_update_line(1, "FILA MOV. FALHOU");
+         while(true);
+    }
+
+    // --- Tasks do FreeRTOS ---
     xTaskCreate(vPollingTask, "Polling Task", 512, NULL, 1, NULL);
+    xTaskCreate(vMotorControlTask, "Motor Task", 1024, NULL, 3, NULL); // Prioridade alta
+
+    printf("Iniciando Scheduler do FreeRTOS...\n");
     vTaskStartScheduler();
+    
     panic_unsupported();
 }
 
-//---------------------------------DECLARAÇÃO DAS FUNÇÕES-----------------------------
+//---------------------------------DECLARAcaO DAS FUNcoES-----------------------------
+
+// -------------------- Funcoes Servidor HTTP --------------------
 
 #define CHUNK_SIZE 1024
 
-// Função para enviar o próximo pedaço de resposta se houver espaço na janela
+// Funcao para enviar o proximo pedaco de resposta se houver espaco na janela
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
 {
     if (hs->offset >= hs->len)
@@ -244,12 +394,12 @@ static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
     }
     else if (err != ERR_MEM)
     {
-        // log erro irreversível
+        // log erro irreversivel
         printf("tcp_write fatal: %d\n", err);
     }
 }
 
-// Função de callback para enviar dados HTTP
+// Funcao de callback para enviar dados HTTP
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
 {
     struct http_state *hs = (struct http_state *)arg;
@@ -266,7 +416,37 @@ static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
     return ERR_OK;
 }
 
-// Função de callback para receber dados HTTP
+// Funcao para escanear por um cartao RFID e obter sua UID
+static bool scan_for_uid(char* uid_buffer, size_t buffer_len) {
+    if (g_mfrc == NULL) return false;
+    
+    memset(uid_buffer, 0, buffer_len);
+
+    // Tenta por ~100ms
+    for (int i = 0; i < 2; i++) {
+        // Procura por novos cartoes
+        if (PICC_IsNewCardPresent(g_mfrc)) {
+            // Seleciona um dos cartoes
+            if (PICC_ReadCardSerial(g_mfrc)) {
+                // Formata a UID em string
+                int offset = 0;
+                for (int j = 0; j < g_mfrc->uid.size && offset < (buffer_len - 4); j++) {
+                    // Adiciona um espaco entre os bytes
+                    offset += snprintf(uid_buffer + offset, buffer_len - offset, "%02X ", g_mfrc->uid.uidByte[j]);
+                }
+                uid_buffer[offset > 0 ? offset - 1 : 0] = '\0'; // Remove o ultimo espaco
+
+                PICC_HaltA(g_mfrc); // Para o cartao
+                return true; // Sucesso
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(50)); // Pequena espera
+    }
+
+    return false; // Nao encontrou
+}
+
+// Funcao de callback para receber dados HTTP
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     if (!p)
@@ -301,6 +481,11 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     hs->sent = 0;
     hs->offset = 0;
+    hs->using_smallbuf = false;
+    hs->response_ptr = NULL;
+
+    // PROCESSAMENTO DAS ROTAS HTTP
+    if (strstr(req, "GET /api/log?"))
     hs->using_smallbuf = false;
     hs->response_ptr = NULL;
 
@@ -360,15 +545,22 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         if (query_param(req, "slot", slot, sizeof(slot)))
         {
             printf("Armazenamento solicitado - Slot: %s\n", slot);
-            log_push("Armazenamento na posicao %s solicitado", slot);
-            
-            // Acende LED da posição do slot (verde para armazenamento)
-            int x, y;
-            if (converte_posicao_para_coordenadas(slot, &x, &y)) {
-                uint32_t cor = 0x00FF00; // Verde para slot ocupado
-                acende_led_matriz(x, y, cor);
-                printf("LED acendido na posição (%d,%d) - Slot: %s\n", x, y, slot);
-                log_push("LED acendido na posicao (%d,%d) - Slot: %s", x, y, slot);
+            log_push("Web: Pedido de ARMAZENAR no slot %s", slot);
+
+            int cell_index = slot_para_indice(slot);
+            if (cell_index != -1) {
+                MovementCommand cmd;
+                cmd.cell_index = cell_index;
+                cmd.is_store_operation = true; // true = guardar
+
+                // Envia o comando para a fila da task de motores
+                if (xQueueSend(g_movement_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+                    log_push("ERRO: Fila de movimento esta cheia!");
+                    printf("ERRO: Fila de movimento cheia!\n");
+                }
+            } else {
+                log_push("ERRO: Slot invalido '%s' recebido da web.", slot);
+                printf("ERRO: Slot invalido '%s' da web.\n", slot);
             }
         }
         hs->using_smallbuf = true;
@@ -382,14 +574,22 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         if (query_param(req, "slot", slot, sizeof(slot)))
         {
             printf("Retirada solicitada - Slot: %s\n", slot);
-            log_push("Retirada da posicao %s solicitada", slot);
+            log_push("Web: Pedido de RETIRAR do slot %s", slot);
             
-            // Apaga LED da posição
-            int x, y;
-            if (converte_posicao_para_coordenadas(slot, &x, &y)) {
-                apaga_led_matriz(x, y);
-                printf("LED apagado na posição (%d,%d) - Slot: %s\n", x, y, slot);
-                log_push("LED apagado na posicao (%d,%d) - Slot: %s", x, y, slot);
+            int cell_index = slot_para_indice(slot);
+            if (cell_index != -1) {
+                MovementCommand cmd;
+                cmd.cell_index = cell_index;
+                cmd.is_store_operation = false; // false = retirar
+
+                // Envia o comando para a fila da task de motores
+                if (xQueueSend(g_movement_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+                    log_push("ERRO: Fila de movimento esta cheia!");
+                    printf("ERRO: Fila de movimento cheia!\n");
+                }
+            } else {
+                log_push("ERRO: Slot invalido '%s' recebido da web.", slot);
+                printf("ERRO: Slot invalido '%s' da web.\n", slot);
             }
         }
         hs->using_smallbuf = true;
@@ -398,17 +598,48 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     else if (strstr(req, "POST /toggle-electromagnet"))
     {
-        // Processar ativação/desativação do eletroímã
+        // Processar ativacao/desativacao do eletroima
         toggle_eletroima();
-        printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
+        printf("Eletroima alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
         log_push("Eletroima %s", electromagnet_active ? "ativado" : "desativado");
         
         hs->using_smallbuf = true;
         hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
         hs->response_ptr = hs->smallbuf;
     }
+    else if (strstr(req, "GET /api/electromagnet-status"))
+    {
+        // Retorna o status atual do eletroima
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), 
+                          "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"active\":%s}",
+                          electromagnet_active ? "true" : "false");
+        hs->response_ptr = hs->smallbuf;
+    }
+    else if (strstr(req, "POST /home"))
+    {
+        // Retorna os eixos ao ponto inicial (0,0,0)
+        printf("Comando de retorno ao home recebido.\n");
+        log_push("Web: Solicitacao de retorno ao home (0,0,0)");
+        
+        // Cria um comando especial para retornar ao home
+        // Usamos um indice negativo para indicar que e um comando de home
+        MovementCommand home_cmd;
+        home_cmd.cell_index = -1; // Codigo especial para home
+        home_cmd.is_store_operation = false;
+        
+        if (xQueueSend(g_movement_queue, &home_cmd, 0) == pdPASS) {
+            log_push("Comando de home enfileirado.");
+        } else {
+            log_push("ERRO: Fila de movimento cheia!");
+        }
+        
+        hs->using_smallbuf = true;
+        hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        hs->response_ptr = hs->smallbuf;
+    }
     else
-    { // Rota padrão (página principal)
+    { // Rota padrao (pagina principal)
         preencher_html();
         hs->response_ptr = html; // apontar para buffer global
         hs->len = strlen(html);
@@ -423,14 +654,14 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     return ERR_OK;
 }
 
-// Função de callback para aceitar novas conexões TCP
+// Funcao de callback para aceitar novas conexoes TCP
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
     tcp_recv(newpcb, http_recv);
     return ERR_OK;
 }
 
-// Função para iniciar o servidor HTTP
+// Funcao para iniciar o servidor HTTP
 static void start_http_server(void)
 {
     struct tcp_pcb *pcb = tcp_new();
@@ -449,121 +680,444 @@ static void start_http_server(void)
     printf("Servidor HTTP rodando na porta 80...\n");
 }
 
-// Funções da matriz LED
+// Simples utilitarios para parsing de URL/query
+static int url_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
 
-// Converte coordenada (x,y) para índice do LED no array
-static int coordenada_para_indice(int x, int y) {
-    if (x < 0 || x >= MATRIZ_LARGURA || y < 0 || y >= MATRIZ_ALTURA) {
-        return -1; 
+// Decodifica URL inplace (modifica a string original)
+static void url_decode_inplace(char *s) {
+    char *w = s;
+    while (*s) {
+        if (*s == '+') { *w++ = ' '; s++; }
+        else if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
+            int hi = url_hex(s[1]);
+            int lo = url_hex(s[2]);
+            if (hi >= 0 && lo >= 0) {
+                *w++ = (char)((hi << 4) | lo);
+                s += 3;
+            } else {
+                *w++ = *s++; // invalid, copy raw
+            }
+        } else {
+            *w++ = *s++;
+        }
+    }
+    *w = '\0';
+}
+
+// Procura key na query string da primeira linha (apos '?') e copia o valor decodificado
+static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
+    const char *q = strchr(req, '?');
+    if (!q) return false;
+    q++; // after ?
+    size_t klen = strlen(key);
+    while (*q && *q != '\r' && *q != '\n' && *q != ' ') {
+        if (strncmp(q, key, klen) == 0 && q[klen] == '=') {
+            const char *v = q + klen + 1;
+            size_t i = 0;
+            while (*v && *v != '&' && *v != ' ' && *v != '\r' && *v != '\n') {
+                if (i + 1 < outsz) out[i++] = *v;
+                v++;
+            }
+            out[i] = '\0';
+            url_decode_inplace(out);
+            return true;
+        }
+        // skip to next param
+        while (*q && *q != '&' && *q != ' ' && *q != '\r' && *q != '\n') q++;
+        if (*q == '&') q++;
+    }
+    return false;
+}
+// -------------------- FUNcoES DO XYZ --------------------
+
+// Converte o indice (0-5) para o nome do slot (ex: "A1")
+static const char* indice_para_slot(int idx) {
+    switch(idx) {
+        case 0: return "A1";
+        case 1: return "A2";
+        case 2: return "B1";
+        case 3: return "B2";
+        case 4: return "C1";
+        case 5: return "C2";
+        default: return "??";
+    }
+}
+
+// Converte o nome do slot (ex: "A1") para o indice do array (0-5)
+static int slot_para_indice(char *slot) {
+    // 3 Colunas (A, B, C) x 2 Linhas (1, 2)
+    if (strcmp(slot, "A1") == 0) return 0;
+    if (strcmp(slot, "A2") == 0) return 1;
+    if (strcmp(slot, "B1") == 0) return 2;
+    if (strcmp(slot, "B2") == 0) return 3;
+    if (strcmp(slot, "C1") == 0) return 4;
+    if (strcmp(slot, "C2") == 0) return 5;
+    
+    return -1; // Invalido
+}
+
+// Inicializa todos os pinos da CNC
+static void init_cnc_pins(void) {
+    // (Seu codigo de init_cnc_pins... sem mudancas)
+    // Pinos de Passo (Saida)
+    gpio_init(STEP_PIN_X); 
+    gpio_set_dir(STEP_PIN_X, GPIO_OUT);
+    gpio_init(STEP_PIN_Y); 
+    gpio_set_dir(STEP_PIN_Y, GPIO_OUT);
+    gpio_init(STEP_PIN_Z); 
+    gpio_set_dir(STEP_PIN_Z, GPIO_OUT);
+    // Pinos de Direcao (Saida)
+    gpio_init(DIR_PIN_X);
+    gpio_set_dir(DIR_PIN_X, GPIO_OUT);
+    gpio_init(DIR_PIN_Y); 
+    gpio_set_dir(DIR_PIN_Y, GPIO_OUT);
+    gpio_init(DIR_PIN_Z); 
+    gpio_set_dir(DIR_PIN_Z, GPIO_OUT);
+    // Pinos de Habilitacao (Saida)
+    gpio_init(ENA_PIN_X); 
+    gpio_set_dir(ENA_PIN_X, GPIO_OUT);
+    gpio_init(ENA_PIN_Y); 
+    gpio_set_dir(ENA_PIN_Y, GPIO_OUT);
+    gpio_init(ENA_PIN_Z); 
+    gpio_set_dir(ENA_PIN_Z, GPIO_OUT);
+    gpio_put(ENA_PIN_X, 0);
+    gpio_put(ENA_PIN_Y, 0);
+    gpio_put(ENA_PIN_Z, 0);
+    // Pinos de Fim de Curso (Entrada com Pull-up)
+    gpio_init(ENDSTOP_PIN_X);
+    gpio_set_dir(ENDSTOP_PIN_X, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_X); 
+    gpio_init(ENDSTOP_PIN_Y);
+    gpio_set_dir(ENDSTOP_PIN_Y, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_Y);
+    gpio_init(ENDSTOP_PIN_Z);
+    gpio_set_dir(ENDSTOP_PIN_Z, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_Z);
+    
+    printf("Pinos da CNC inicializados.\n");
+}
+
+// Gera um unico pulso de passo
+static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_us) {
+    // (Seu codigo... sem mudancas)
+    gpio_put(dir_pin, direction);
+    gpio_put(step_pin, 1);
+    sleep_us(5); // Duracao minima do pulso
+    gpio_put(step_pin, 0);
+    sleep_us(delay_us); // <-- Usa o delay passado como argumento
+}
+
+// Rotina de Homing (Zera a maquina)
+static void home_all_axes(void) {
+    // Condicao de seguranca: executar apenas com Z no topo (0)
+    if (g_current_steps_z != 0) {
+        log_push("Home XY abortado: Z != 0 (Z=%ld)", g_current_steps_z);
+        lcd_update_line(1, "Home XY: Z!=0");
+        return;
     }
 
-    if (y % 2 == 0) {
-        // linhas pares: esquerda -> direita
-        return y * MATRIZ_LARGURA + x;
+    // Armazena a ultima posicao conhecida antes do retorno
+    long start_x = g_current_steps_x;
+    long start_y = g_current_steps_y;
+    g_last_target_steps_x = start_x;
+    g_last_target_steps_y = start_y;
+
+    lcd_update_line(1, "Home XY (soft)...");
+    // Mantem Z em 0 e retorna X/Y para 0
+    move_axes_to_steps(0, 0, g_current_steps_z);
+
+    log_push("Home XY software: (%ld,%ld)->(0,0)", start_x, start_y);
+    printf("Home XY (software) concluido.\n");
+    lcd_update_line(1, "Home XY OK");
+}
+
+// Move os eixos para uma coordenada ABSOLUTA em PASSOS
+static void move_axes_to_steps(long target_x_steps, long target_y_steps, long target_z_steps) {
+    
+    const bool DIR_X_POSITIVO = false;  // Logica invertida para X
+    const bool DIR_Y_POSITIVO = true;
+    const bool DIR_Z_POSITIVO = true;
+
+    // --- Calcula deltas e direcoes para TODOS os eixos ---
+    long delta_x = target_x_steps - g_current_steps_x;
+    long delta_y = target_y_steps - g_current_steps_y;
+    long delta_z = target_z_steps - g_current_steps_z; 
+    
+    bool dir_x = (delta_x > 0) ? DIR_X_POSITIVO : !DIR_X_POSITIVO;
+    bool dir_y = (delta_y > 0) ? DIR_Y_POSITIVO : !DIR_Y_POSITIVO;
+    bool dir_z = (delta_z > 0) ? DIR_Z_POSITIVO : !DIR_Z_POSITIVO; 
+
+    long steps_x = labs(delta_x);
+    long steps_y = labs(delta_y);
+    long steps_z = labs(delta_z); 
+
+    // --- Encontra o maximo de passos entre OS TRES eixos ---
+    long max_steps = (steps_x > steps_y) ? steps_x : steps_y;
+    if (steps_z > max_steps) {
+         max_steps = steps_z;
+    }
+
+    // --- Loop de movimento intercalado ---
+    for (long i = 0; i < max_steps; i++) {
+        if (i < steps_x) {
+            // Passa o delay de XY
+            step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
+        }
+        if (i < steps_y) {
+            // Passa o delay de XY
+            step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
+        }
+        if (i < steps_z) { 
+            // Passa o delay de Z
+            step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
+        }
+        
+        if(i % 20 == 0) cyw43_arch_poll(); // Mantem o WiFi vivo
+    }
+    
+    // --- Atualiza as posicoes globais de TODOS os eixos ---
+    g_current_steps_x = target_x_steps;
+    g_current_steps_y = target_y_steps;
+    g_current_steps_z = target_z_steps; 
+
+    // Atualiza os ultimos alvos de X/Y 
+    g_last_target_steps_x = target_x_steps;
+    g_last_target_steps_y = target_y_steps;
+}
+
+// Executa a sequencia completa para pegar ou soltar um pallet
+static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
+    if (cell_index < 0 || cell_index >= 6) {
+        printf("Erro: indice de celula invalido %d\n", cell_index);
+        log_push("CNC: Erro, celula %d invalida", cell_index);
+        lcd_update_line(0, "ERRO: Cel Inval"); // <- FEEDBACK LCD
+        return;
+    }
+
+    // 1. Busca as coordenadas em MM da celula alvo
+    CellPosition target_mm = g_cell_map[cell_index];
+    const char* slot_name = indice_para_slot(cell_index); // "A1", "B2", etc.
+    
+    // 2. CONVERTE as coordenadas de MM para PASSOS
+    long target_x_steps = (long)(target_mm.x_mm * STEPS_PER_MM_X);
+    long target_y_steps = (long)(target_mm.y_mm * STEPS_PER_MM_Y);
+    long z_safe_steps   = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
+    long z_pickup_steps = (long)(Z_PICKUP_MM * STEPS_PER_MM_Z);
+
+    // A sua solicitacao pede para "retornar a posicao 0".
+    long z_return_steps = 0; // Z em 0 (topo)
+
+    char op_str[16];
+    snprintf(op_str, 16, "%s %s", is_pickup_operation ? "Pegando" : "Guardando", slot_name);
+    log_push("CNC: %s (X:%.1f, Y:%.1f)", op_str, target_mm.x_mm, target_mm.y_mm);
+    lcd_update_line(0, op_str);      // <- FEEDBACK LCD
+    lcd_update_line(1, "Movendo Z-Safe"); // <- FEEDBACK LCD
+
+    // 3. --- INiCIO DA SEQUeNCIA DE MOVIMENTO ---
+    
+    // 3.1. Sobe o Z para a altura de seguranca (SEMPRE)
+    // (Usamos g_current_steps_x e _y para mover apenas Z)
+    move_axes_to_steps(g_current_steps_x, g_current_steps_y, z_safe_steps);
+
+    // 3.2. Move X e Y para a posicao (X, Y) da celula
+    lcd_update_line(1, "Movendo X/Y..."); // <- FEEDBACK LCD
+    move_axes_to_steps(target_x_steps, target_y_steps, z_safe_steps);
+
+    // 3.3. Desce o Z para a altura de pickup/dropoff
+    lcd_update_line(1, "Descendo Z..."); // <- FEEDBACK LCD
+    move_axes_to_steps(target_x_steps, target_y_steps, z_pickup_steps);
+
+    vTaskDelay(pdMS_TO_TICKS(250)); // Pausa para estabilizar
+    lcd_update_line(1, "Lendo RFID..."); // <- FEEDBACK LCD
+
+    // 3.4. --- LoGICA RFID ---
+    char scanned_uid[UID_STRLEN];
+    bool pallet_present = scan_for_uid(scanned_uid, UID_STRLEN);
+    
+    bool operation_aborted = false;
+
+    if (is_pickup_operation) {
+
+        // RFID ainda nao foi implementado, codigo inutilizado
+
+        // --- LoGICA DE RETIRADA (REGRA 2) ---
+        /*if (!pallet_present) {
+            // ERRO: Tentou pegar, mas o slot esta vazio
+            log_push("ERRO: Slot %s esta VAZIO. Operacao de retirada abortada.", slot_name);
+            lcd_update_line(1, "ERRO: Slot Vazio!");
+            operation_aborted = true; // Marca para abortar
+        } else {*/
+            // Sucesso: Pallet esta la.
+            log_push("Pallet [..%s] detectado em %s. Retirando.", 
+                   (strlen(scanned_uid) > 9 ? scanned_uid + strlen(scanned_uid) - 9 : scanned_uid), slot_name);
+            lcd_update_line(1, "Pallet OK. Ligando");
+            
+            // ATIVA O ELETROIMA (para pegar)
+            ativar_eletroima();
+            vTaskDelay(pdMS_TO_TICKS(500)); // Espera 500ms
+
+            // Atualiza o inventario (com mutex)
+            if (xSemaphoreTake(g_inventory_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                g_cell_uids[cell_index][0] = '\0'; // Slot agora esta vazio
+                xSemaphoreGive(g_inventory_mutex);
+            }
+            // O ELETROIMA CONTINUA ATIVO (conforme Regra 2)
+        //}
+
     } else {
-        // linhas ímpares: direita -> esquerda
-        return y * MATRIZ_LARGURA + (MATRIZ_LARGURA - 1 - x);
-    }
-}
+        // --- LoGICA DE ARMAZENAMENTO (REGRA 1) ---
+        if (pallet_present) {
+            // ERRO: Tentou guardar, mas o slot esta ocupado
+            log_push("ERRO: Slot %s esta OCUPADO (UID: %s). Operacao de guarda abortada.", slot_name, scanned_uid);
+            lcd_update_line(1, "ERRO: Slot Ocupado!");
+            operation_aborted = true; // Marca para abortar
+        } else {
+            // Sucesso: Slot esta vazio.
+            lcd_update_line(1, "Slot Vazio. Soltando");
+            
+            // DESATIVA O ELETROIMA (para soltar)
+            desativar_eletroima();
+            vTaskDelay(pdMS_TO_TICKS(500)); // Espera o pallet assentar
 
-// Envia buffer completo para a matriz
-static void atualiza_matriz(void) {
-    for (int i = 0; i < NUM_PIXELS; i++) {
-        // WS2812 usa formato GRB (shift p/ alinhar com protocolo)
-        uint32_t cor = matriz_leds[i];
-        pio_sm_put_blocking(pio, sm, cor << 8u);
-    }
-}
+            // Agora, escaneia o pallet que acabamos de soltar para registrar no inventario
+            bool drop_success = scan_for_uid(scanned_uid, UID_STRLEN);
+            
+            if (!drop_success) {
+                log_push("ALERTA: Soltou pallet em %s, mas nao consigo le-lo! Inventario nao atualizado.", slot_name);
+                lcd_update_line(1, "Alerta: Drop fail?");
+            } else {
+                log_push("Pallet [..%s] guardado em %s.", 
+                         (strlen(scanned_uid) > 9 ? scanned_uid + strlen(scanned_uid) - 9 : scanned_uid), slot_name);
+                lcd_update_line(1, "Drop OK.");
 
-// Acende LED em (x,y) com uma cor RGB
-static void acende_led_matriz(int x, int y, uint32_t cor) {
-    int idx = coordenada_para_indice(x, y);
-    if (idx >= 0) {
-        matriz_leds[idx] = cor;
-        atualiza_matriz();
+                // Atualiza o inventario (com mutex)
+                if (xSemaphoreTake(g_inventory_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    strncpy(g_cell_uids[cell_index], scanned_uid, UID_STRLEN - 1);
+                    g_cell_uids[cell_index][UID_STRLEN - 1] = '\0'; // Garante terminacao nula
+                    xSemaphoreGive(g_inventory_mutex);
+                }
+            }
+            // O ELETROIMA CONTINUA DESATIVADO (conforme Regra 1)
+        }
     }
-}
 
-// Apaga LED em (x,y)
-static void apaga_led_matriz(int x, int y) {
-    int idx = coordenada_para_indice(x, y);
-    if (idx >= 0) {
-        matriz_leds[idx] = 0x000000; // preto
-        atualiza_matriz();
-    }
-}
-
-// Inicializa a matriz LED
-static void inicializa_matriz_led(void) {
-    // Inicializa PIO para WS2812
-    uint offset = pio_add_program(pio, &pio_matrix_program);
-    sm = pio_claim_unused_sm(pio, true);
-    pio_matrix_program_init(pio, sm, offset, LED_PIN);
-
-    // Limpa a matriz no início
-    for (int i = 0; i < NUM_PIXELS; i++) {
-        matriz_leds[i] = 0x000000;
-    }
-    atualiza_matriz();
+    // 3.5. --- LoGICA DE RETORNO DO Z ---
     
-    printf("Matriz LED 5x5 inicializada no pino %d\n", LED_PIN);
+    lcd_update_line(1, "Retornando Z..."); // <- FEEDBACK LCD
+    move_axes_to_steps(g_current_steps_x, g_current_steps_y, z_return_steps); // Move Z para 0
+
+    // 3.7. --- Feedback Final ---
+    if (operation_aborted) {
+        log_push("CNC: Operacao %s %s ABORTADA.", is_pickup_operation ? "Pegar" : "Guardar", slot_name);
+        printf("Operacao na Celula %d ABORTADA.\n", cell_index);
+        lcd_update_line(0, "Status: Pronto");     // <- FEEDBACK LCD
+        lcd_update_line(1, "Falha: %s", is_pickup_operation ? "Vazio" : "Ocupado"); // <- FEEDBACK LCD
+    } else {
+        log_push("CNC: Operacao %s %s concluida.", is_pickup_operation ? "Pegar" : "Guardar", slot_name);
+        printf("Operacao na Celula %d concluida.\n", cell_index);
+        lcd_update_line(0, "Status: Pronto");     // <- FEEDBACK LCD
+        lcd_update_line(1, "%s Concluido", slot_name); // <- FEEDBACK LCD
+    }
 }
 
-// Converte posição (ex: A1, B3) para coordenadas (x,y)
-static int converte_posicao_para_coordenadas(char *posicao, int *x, int *y) {
-    if (strlen(posicao) < 2) {
-        *x = -1;
-        *y = -1;
-        return 0;
-    }
-    
-    // Converte letra para coordenada Y (A=0, B=1, C=2, D=3)
-    char letra = toupper(posicao[0]);
-    *y = letra - 'A';
-    
-    // Converte número para coordenada X (1=0, 2=1, 3=2, 4=3, 5=4)
-    *x = posicao[1] - '1';
-    
-    // Verifica se as coordenadas são válidas
-    if (*x < 0 || *x >= MATRIZ_LARGURA || *y < 0 || *y >= MATRIZ_ALTURA) {
-        *x = -1;
-        *y = -1;
-        return 0;
-    }
-    
-    return 1; // Sucesso
-}
 
-// Funções do eletroímã
+// -------------------- Funcoes do eletroima --------------------
 
-// Inicializa o eletroímã
-static void inicializa_eletroima(void) {
+// Inicializa o eletroima
+static void inicializa_eletroima(void)
+{
     gpio_init(ELECTROMAGNET_PIN);
     gpio_set_dir(ELECTROMAGNET_PIN, GPIO_OUT);
     gpio_put(ELECTROMAGNET_PIN, 0); // Inicia desativado
     electromagnet_active = false;
-    printf("Eletroímã inicializado no pino %d\n", ELECTROMAGNET_PIN);
+    printf("Eletroima inicializado no pino %d\n", ELECTROMAGNET_PIN);
 }
 
-// Ativa o eletroímã
-static void ativar_eletroima(void) {
+// Ativa o eletroima
+static void ativar_eletroima(void)
+{
     gpio_put(ELECTROMAGNET_PIN, 1);
     electromagnet_active = true;
-    printf("Eletroímã ativado\n");
+    printf("Eletroima ativado\n");
 }
 
-// Desativa o eletroímã
-static void desativar_eletroima(void) {
+// Desativa o eletroima
+static void desativar_eletroima(void)
+{
     gpio_put(ELECTROMAGNET_PIN, 0);
     electromagnet_active = false;
-    printf("Eletroímã desativado\n");
+    printf("Eletroima desativado\n");
 }
 
-// Alterna o estado do eletroímã
-static void toggle_eletroima(void) {
+// Alterna o estado do eletroima
+static void toggle_eletroima(void)
+{
     if (electromagnet_active) {
         desativar_eletroima();
     } else {
         ativar_eletroima();
+    }
+}
+
+// -------------------- Funcoes de log --------------------
+
+// Adiciona uma nova linha ao log
+static void log_push(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_log[g_log_head], LOG_LINE_MAX, fmt, ap);
+    va_end(ap);
+
+    g_log_head = (g_log_head + 1) % LOG_CAP;
+    if (g_log_count < LOG_CAP) g_log_count++;
+}
+
+// Retorna a linha i (0 = mais antiga, g_log_count-1 = mais recente)
+static const char *log_get(int idx)
+{
+    if (idx < 0 || idx >= g_log_count) return "";
+    int start = (g_log_head - g_log_count + LOG_CAP) % LOG_CAP;
+    int i = (start + idx) % LOG_CAP;
+    return g_log[i];
+}
+
+// -------------------- Funcoes do display LCD I2C --------------------
+
+// Funcao para atualizar uma linha do display LCD com formatacao
+void lcd_update_line(int line, const char *fmt, ...) {
+    if (g_lcd_mutex == NULL) return; // Mutex nao foi criado
+
+    char buffer[17]; // 16 caracteres + \0
+    memset(buffer, ' ', 16); // Preenche com espacos
+    buffer[16] = '\0';
+
+    // 1. Formata a string
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, 17, fmt, args); // 17 para garantir o \0
+    va_end(args);
+
+    // 2. Preenche o resto com espacos (para apagar lixo)
+    int len = strlen(buffer);
+    for (int i = len; i < 16; i++) {
+        buffer[i] = ' ';
+    }
+    buffer[16] = '\0'; // Garante o fim
+
+    // 3. Trava o mutex para proteger o I2C
+    if (xSemaphoreTake(g_lcd_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        
+        // 4. Posiciona o cursor e escreve
+        lcd_set_cursor(line, 0);
+        lcd_string(buffer);
+        
+        // 5. Libera o mutex
+        xSemaphoreGive(g_lcd_mutex);
     }
 }
