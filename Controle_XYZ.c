@@ -1,5 +1,5 @@
 // Bibliotecas
-#include "pico/stdlib.h"        // Biblioteca padrão do Pico
+#include "pico/stdlib.h"        // Biblioteca padrao do Pico
 #include "hardware/gpio.h"      // Biblioteca de GPIO
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
@@ -7,32 +7,32 @@
 #include "hardware/spi.h"       // Biblioteca de SPI
 
 #include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
-#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulação de TCP/IP
+#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulacao de TCP/IP
 
 #include "FreeRTOS.h"           // Biblioteca de FreeRTOS
 #include "task.h"               // Biblioteca de tasks
 #include "queue.h"              // Biblioteca de listas
 #include "semphr.h"             // Biblioteca para Mutex/Semaforos
 
-#include "lib/HTML.h"           // Biblioteca para geração de HTML
+#include "lib/HTML.h"           // Biblioteca para geracao de HTML
 #include "lib/lcd_1602_i2c.h"   // Biblioteca para Display LCD
 #include "lib/mfrc522.h"        // Biblioteca para o Sensor RFID
 
-#include <stdio.h>              // Biblioteca de entrada e saída padrão
-#include <stdlib.h>             // Biblioteca padrão
+#include <stdio.h>              // Biblioteca de entrada e saida padrao
+#include <stdlib.h>             // Biblioteca padrao
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
-#include <stdarg.h>             // Biblioteca para manipulação de argumentos variáveis
-#include <math.h>               // Biblioteca matemática
+#include <stdarg.h>             // Biblioteca para manipulacao de argumentos variaveis
+#include <math.h>               // Biblioteca matematica
 
-//----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
+//----------------------------------VaRIAVEIS GLOBAIS----------------------------------
 
 #define WIFI_SSID "Armazem XYZ"                    // Nome da rede Wi-Fi
 
 #define WIFI_PASS "tic37#grupo4"                   // Senha da rede Wi-Fi
 
-// Configurações do eletroímã
-#define ELECTROMAGNET_PIN 7    // LED no mesmo pino do eletroímã
+// Configuracoes do eletroima
+#define ELECTROMAGNET_PIN 7    // Pino do eletroima
 
 // Pinos Eixo X
 #define STEP_PIN_X 14
@@ -94,7 +94,7 @@ CellPosition g_cell_map[6] = {
 };
 
 #define Z_TRAVEL_MAX_MM 45.0    // Curso maximo fisico do Eixo Z
-#define Z_SAFE_MM 0.0           // Altura Z segura (Modificar caso precise de mais espaço)
+#define Z_SAFE_MM 0.0           // Altura Z segura (Modificar caso precise de mais espaco)
 #define Z_PICKUP_MM 45.0        // Altura Z para pegar/soltar (45mm abaixo do topo)
 
 // Delay (em microssegundos) entre pulsos do motor. Controla a velocidade.
@@ -123,24 +123,24 @@ typedef struct {
     bool is_store_operation;    // true = guardar (soltar), false = retirar (pegar)
 } MovementCommand;
 
-struct http_state                               // Struct para manter o estado da conexão HTTP
+struct http_state                               // Struct para manter o estado da conexao HTTP
 {
     const char *response_ptr;   // ponteiro para o buffer com a resposta
     char smallbuf[1024];        // usado para respostas pequenas/JSON
     size_t len;                 // tamanho total da resposta
     size_t sent;
-    size_t offset;              // bytes já enfileirados para envio
+    size_t offset;              // bytes ja enfileirados para envio
     bool using_smallbuf;
 };
 
-// Histórico de logs em memória
+// Historico de logs em memoria
 #define LOG_CAP 120
 #define LOG_LINE_MAX 128
 static char g_log[LOG_CAP][LOG_LINE_MAX];
-static int g_log_head = 0;  // aponta para a próxima posição de escrita
-static int g_log_count = 0; // quantos registros válidos
+static int g_log_head = 0;  // aponta para a proxima posicao de escrita
+static int g_log_count = 0; // quantos registros validos
 
-// Variáveis do eletroímã
+// Variaveis do eletroima
 bool electromagnet_active = false;
 
 MFRC522Ptr_t g_mfrc; // Ponteiro global para a instancia do MFRC522
@@ -150,9 +150,9 @@ static char g_cell_uids[6][UID_STRLEN]; // Armazena a UID de qual pallet esta em
 static SemaphoreHandle_t g_inventory_mutex; // Protege g_cell_uids
 static SemaphoreHandle_t g_lcd_mutex; // Protege g_cell_uids
 
-//---------------------------------------FUNÇÕES---------------------------------------
+//---------------------------------------FUNcoES---------------------------------------
 
-// Funções do servidor HTTP
+// Funcoes do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
@@ -162,7 +162,7 @@ static int url_hex(char c);
 static void url_decode_inplace(char *s);
 static bool query_param(const char *req, const char *key, char *out, size_t outsz);
 
-// Funções para movimentação dos eixos
+// Funcoes para movimentacao dos eixos
 static void init_cnc_pins(void);
 static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_us);
 static void home_all_axes(void);
@@ -171,28 +171,28 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation);
 static int slot_para_indice(char *slot); 
 static const char* indice_para_slot(int idx);
 
-// Funções do eletroímã
+// Funcoes do eletroima
 static void inicializa_eletroima(void);
 static void ativar_eletroima(void);
 static void desativar_eletroima(void);
 static void toggle_eletroima(void);
 
-// Funções de log
+// Funcoes de log
 static void log_push(const char *fmt, ...);
 static const char *log_get(int idx);
 static bool scan_for_uid(char* uid_buffer, size_t buffer_len);
 
-// Funções do display LCD I2C
+// Funcoes do display LCD I2C
 void lcd_update_line(int line, const char *fmt, ...);
 
 //----------------------------------------TASKS----------------------------------------
 
-// Task de polling para manter a conexão Wi-Fi ativa
+// Task de polling para manter a conexao Wi-Fi ativa
 void vPollingTask(void *pvParameters)
 {
     while (true)
     {
-        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexão ativa
+        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexao ativa
         vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
     }
 }
@@ -230,7 +230,7 @@ void vMotorControlTask(void *pvParameters)
         // Aguarda um comando da fila (vindo do http_recv)
         if (xQueueReceive(g_movement_queue, &cmd, portMAX_DELAY) == pdPASS)
         {
-            // Verifica se é um comando de home (cell_index == -1)
+            // Verifica se e um comando de home (cell_index == -1)
             if (cmd.cell_index == -1) {
                 printf("Comando de HOME recebido. Retornando a (0,0,0)...\n");
                 log_push("CNC: Retornando ao home (0,0,0)");
@@ -245,7 +245,7 @@ void vMotorControlTask(void *pvParameters)
                 lcd_update_line(0, "Status: Pronto");
                 lcd_update_line(1, "Home OK");
             } else {
-                // Comando normal de célula
+                // Comando normal de celula
                 printf("Comando recebido: Celula %d, Operacao: %s\n", 
                        cmd.cell_index, cmd.is_store_operation ? "GUARDAR" : "RETIRAR");
                 
@@ -371,13 +371,13 @@ int main()
     panic_unsupported();
 }
 
-//---------------------------------DECLARAÇÃO DAS FUNÇÕES-----------------------------
+//---------------------------------DECLARAcaO DAS FUNcoES-----------------------------
 
-// -------------------- Funções Servidor HTTP --------------------
+// -------------------- Funcoes Servidor HTTP --------------------
 
 #define CHUNK_SIZE 1024
 
-// Função para enviar o próximo pedaço de resposta se houver espaço na janela
+// Funcao para enviar o proximo pedaco de resposta se houver espaco na janela
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
 {
     if (hs->offset >= hs->len)
@@ -394,12 +394,12 @@ static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
     }
     else if (err != ERR_MEM)
     {
-        // log erro irreversível
+        // log erro irreversivel
         printf("tcp_write fatal: %d\n", err);
     }
 }
 
-// Função de callback para enviar dados HTTP
+// Funcao de callback para enviar dados HTTP
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
 {
     struct http_state *hs = (struct http_state *)arg;
@@ -416,7 +416,7 @@ static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
     return ERR_OK;
 }
 
-// Função para escanear por um cartão RFID e obter sua UID
+// Funcao para escanear por um cartao RFID e obter sua UID
 static bool scan_for_uid(char* uid_buffer, size_t buffer_len) {
     if (g_mfrc == NULL) return false;
     
@@ -446,7 +446,7 @@ static bool scan_for_uid(char* uid_buffer, size_t buffer_len) {
     return false; // Nao encontrou
 }
 
-// Função de callback para receber dados HTTP
+// Funcao de callback para receber dados HTTP
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     if (!p)
@@ -593,9 +593,9 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     else if (strstr(req, "POST /toggle-electromagnet"))
     {
-        // Processar ativação/desativação do eletroímã
+        // Processar ativacao/desativacao do eletroima
         toggle_eletroima();
-        printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
+        printf("Eletroima alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
         log_push("Eletroima %s", electromagnet_active ? "ativado" : "desativado");
         
         hs->using_smallbuf = true;
@@ -604,7 +604,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     else if (strstr(req, "GET /api/electromagnet-status"))
     {
-        // Retorna o status atual do eletroímã
+        // Retorna o status atual do eletroima
         hs->using_smallbuf = true;
         hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), 
                           "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"active\":%s}",
@@ -618,9 +618,9 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         log_push("Web: Solicitacao de retorno ao home (0,0,0)");
         
         // Cria um comando especial para retornar ao home
-        // Usamos um índice negativo para indicar que é um comando de home
+        // Usamos um indice negativo para indicar que e um comando de home
         MovementCommand home_cmd;
-        home_cmd.cell_index = -1; // Código especial para home
+        home_cmd.cell_index = -1; // Codigo especial para home
         home_cmd.is_store_operation = false;
         
         if (xQueueSend(g_movement_queue, &home_cmd, 0) == pdPASS) {
@@ -634,7 +634,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         hs->response_ptr = hs->smallbuf;
     }
     else
-    { // Rota padrão (página principal)
+    { // Rota padrao (pagina principal)
         preencher_html();
         hs->response_ptr = html; // apontar para buffer global
         hs->len = strlen(html);
@@ -649,14 +649,14 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     return ERR_OK;
 }
 
-// Função de callback para aceitar novas conexões TCP
+// Funcao de callback para aceitar novas conexoes TCP
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
     tcp_recv(newpcb, http_recv);
     return ERR_OK;
 }
 
-// Função para iniciar o servidor HTTP
+// Funcao para iniciar o servidor HTTP
 static void start_http_server(void)
 {
     struct tcp_pcb *pcb = tcp_new();
@@ -675,7 +675,7 @@ static void start_http_server(void)
     printf("Servidor HTTP rodando na porta 80...\n");
 }
 
-// Simples utilitários para parsing de URL/query
+// Simples utilitarios para parsing de URL/query
 static int url_hex(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -704,7 +704,7 @@ static void url_decode_inplace(char *s) {
     *w = '\0';
 }
 
-// Procura key na query string da primeira linha (após '?') e copia o valor decodificado
+// Procura key na query string da primeira linha (apos '?') e copia o valor decodificado
 static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
     const char *q = strchr(req, '?');
     if (!q) return false;
@@ -728,7 +728,7 @@ static bool query_param(const char *req, const char *key, char *out, size_t outs
     }
     return false;
 }
-// -------------------- FUNÇÕES DO XYZ --------------------
+// -------------------- FUNcoES DO XYZ --------------------
 
 // Converte o indice (0-5) para o nome do slot (ex: "A1")
 static const char* indice_para_slot(int idx) {
@@ -809,7 +809,7 @@ static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_u
 
 // Rotina de Homing (Zera a maquina)
 static void home_all_axes(void) {
-    // Condição de segurança: executar apenas com Z no topo (0)
+    // Condicao de seguranca: executar apenas com Z no topo (0)
     if (g_current_steps_z != 0) {
         log_push("Home XY abortado: Z != 0 (Z=%ld)", g_current_steps_z);
         lcd_update_line(1, "Home XY: Z!=0");
@@ -834,7 +834,7 @@ static void home_all_axes(void) {
 // Move os eixos para uma coordenada ABSOLUTA em PASSOS
 static void move_axes_to_steps(long target_x_steps, long target_y_steps, long target_z_steps) {
     
-    const bool DIR_X_POSITIVO = false;  // Lógica invertida para X
+    const bool DIR_X_POSITIVO = false;  // Logica invertida para X
     const bool DIR_Y_POSITIVO = true;
     const bool DIR_Z_POSITIVO = true;
 
@@ -904,7 +904,7 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
     long z_safe_steps   = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
     long z_pickup_steps = (long)(Z_PICKUP_MM * STEPS_PER_MM_Z);
 
-    // A sua solicitação pede para "retornar a posição 0".
+    // A sua solicitacao pede para "retornar a posicao 0".
     long z_return_steps = 0; // Z em 0 (topo)
 
     char op_str[16];
@@ -938,7 +938,7 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
 
     if (is_pickup_operation) {
 
-        // RFID ainda não foi implementado, código inutilizado
+        // RFID ainda nao foi implementado, codigo inutilizado
 
         // --- LoGICA DE RETIRADA (REGRA 2) ---
         /*if (!pallet_present) {
@@ -1001,7 +1001,7 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
         }
     }
 
-    // 3.5. --- LÓGICA DE RETORNO DO Z ---
+    // 3.5. --- LoGICA DE RETORNO DO Z ---
     
     lcd_update_line(1, "Retornando Z..."); // <- FEEDBACK LCD
     move_axes_to_steps(g_current_steps_x, g_current_steps_y, z_return_steps); // Move Z para 0
@@ -1021,35 +1021,35 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
 }
 
 
-// -------------------- Funções do eletroímã --------------------
+// -------------------- Funcoes do eletroima --------------------
 
-// Inicializa o eletroímã
+// Inicializa o eletroima
 static void inicializa_eletroima(void)
 {
     gpio_init(ELECTROMAGNET_PIN);
     gpio_set_dir(ELECTROMAGNET_PIN, GPIO_OUT);
     gpio_put(ELECTROMAGNET_PIN, 0); // Inicia desativado
     electromagnet_active = false;
-    printf("Eletroímã inicializado no pino %d\n", ELECTROMAGNET_PIN);
+    printf("Eletroima inicializado no pino %d\n", ELECTROMAGNET_PIN);
 }
 
-// Ativa o eletroímã
+// Ativa o eletroima
 static void ativar_eletroima(void)
 {
     gpio_put(ELECTROMAGNET_PIN, 1);
     electromagnet_active = true;
-    printf("Eletroímã ativado\n");
+    printf("Eletroima ativado\n");
 }
 
-// Desativa o eletroímã
+// Desativa o eletroima
 static void desativar_eletroima(void)
 {
     gpio_put(ELECTROMAGNET_PIN, 0);
     electromagnet_active = false;
-    printf("Eletroímã desativado\n");
+    printf("Eletroima desativado\n");
 }
 
-// Alterna o estado do eletroímã
+// Alterna o estado do eletroima
 static void toggle_eletroima(void)
 {
     if (electromagnet_active) {
@@ -1059,7 +1059,7 @@ static void toggle_eletroima(void)
     }
 }
 
-// -------------------- Funções de log --------------------
+// -------------------- Funcoes de log --------------------
 
 // Adiciona uma nova linha ao log
 static void log_push(const char *fmt, ...)
@@ -1082,9 +1082,9 @@ static const char *log_get(int idx)
     return g_log[i];
 }
 
-// -------------------- Funções do display LCD I2C --------------------
+// -------------------- Funcoes do display LCD I2C --------------------
 
-// Função para atualizar uma linha do display LCD com formatação
+// Funcao para atualizar uma linha do display LCD com formatacao
 void lcd_update_line(int line, const char *fmt, ...) {
     if (g_lcd_mutex == NULL) return; // Mutex nao foi criado
 

@@ -19,8 +19,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(PICO_BOARD pico_w CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
 
-# Configuração do FreeRTOS
-set(FREERTOS_KERNEL_PATH "C:/FreeRTOS-Kernel")  # Modifique este caminho conforme necessário
+set(FREERTOS_KERNEL_PATH "/home/carlos2/FreeRTOS-Kernel")
 include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 project(Controle_XYZ C CXX ASM)
