@@ -1,7 +1,7 @@
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
-else()
+else() 
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.2.0)
