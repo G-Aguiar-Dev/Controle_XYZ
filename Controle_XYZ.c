@@ -38,19 +38,22 @@
 #define STEP_PIN_X 14
 #define DIR_PIN_X 15
 #define ENA_PIN_X 16
-#define ENDSTOP_PIN_X 10 
+#define ENDSTOP_X_MIN 10
+#define ENDSTOP_X_MAX 13
 
 // Pinos Eixo Y
 #define STEP_PIN_Y 1
 #define DIR_PIN_Y 2
 #define ENA_PIN_Y 0
-#define ENDSTOP_PIN_Y 11 
+#define ENDSTOP_Y_MIN 11
+#define ENDSTOP_Y_MAX 17
 
 // Pinos Eixo Z
 #define STEP_PIN_Z 21
 #define DIR_PIN_Z 22
 #define ENA_PIN_Z 20
-#define ENDSTOP_PIN_Z 12 
+#define ENDSTOP_Z_MIN 12
+#define ENDSTOP_Z_MAX 18 
 
 
 // Ex: (200 * 8 micro) / 8mm avanco = 200.0
@@ -209,12 +212,7 @@ void vMotorControlTask(void *pvParameters)
     lcd_update_line(0, "Iniciando Homing");  
     lcd_update_line(1, "Aguarde...");        
     
-    //home_all_axes();
-    
-    printf("Homing concluido! Maquina em (0, 0, 0).\n");
-    log_push("CNC: Homing concluido.");
-    lcd_update_line(0, "Status: Pronto");  
-    lcd_update_line(1, "");             
+    home_all_axes();
 
     // Converte Z_SAFE_MM para passos
     long z_safe_steps = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
@@ -783,16 +781,27 @@ static void init_cnc_pins(void) {
     gpio_put(ENA_PIN_X, 0);
     gpio_put(ENA_PIN_Y, 0);
     gpio_put(ENA_PIN_Z, 0);
-    // Pinos de Fim de Curso (Entrada com Pull-up)
-    gpio_init(ENDSTOP_PIN_X);
-    gpio_set_dir(ENDSTOP_PIN_X, GPIO_IN);
-    gpio_pull_up(ENDSTOP_PIN_X); 
-    gpio_init(ENDSTOP_PIN_Y);
-    gpio_set_dir(ENDSTOP_PIN_Y, GPIO_IN);
-    gpio_pull_up(ENDSTOP_PIN_Y);
-    gpio_init(ENDSTOP_PIN_Z);
-    gpio_set_dir(ENDSTOP_PIN_Z, GPIO_IN);
-    gpio_pull_up(ENDSTOP_PIN_Z);
+    
+    gpio_init(ENDSTOP_X_MIN);
+    gpio_set_dir(ENDSTOP_X_MIN, GPIO_IN);
+    gpio_pull_up(ENDSTOP_X_MIN);
+    gpio_init(ENDSTOP_X_MAX);
+    gpio_set_dir(ENDSTOP_X_MAX, GPIO_IN);
+    gpio_pull_up(ENDSTOP_X_MAX);
+    
+    gpio_init(ENDSTOP_Y_MIN);
+    gpio_set_dir(ENDSTOP_Y_MIN, GPIO_IN);
+    gpio_pull_up(ENDSTOP_Y_MIN);
+    gpio_init(ENDSTOP_Y_MAX);
+    gpio_set_dir(ENDSTOP_Y_MAX, GPIO_IN);
+    gpio_pull_up(ENDSTOP_Y_MAX);
+    
+    gpio_init(ENDSTOP_Z_MIN);
+    gpio_set_dir(ENDSTOP_Z_MIN, GPIO_IN);
+    gpio_pull_up(ENDSTOP_Z_MIN);
+    gpio_init(ENDSTOP_Z_MAX);
+    gpio_set_dir(ENDSTOP_Z_MAX, GPIO_IN);
+    gpio_pull_up(ENDSTOP_Z_MAX);
     
     printf("Pinos da CNC inicializados.\n");
 }
@@ -807,28 +816,61 @@ static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_u
     sleep_us(delay_us); // <-- Usa o delay passado como argumento
 }
 
-// Rotina de Homing (Zera a maquina)
+static bool check_endstop(uint pin) {
+    return gpio_get(pin) == 0;
+}
+
+static bool check_endstop_x_min(void) { return check_endstop(ENDSTOP_X_MIN); }
+static bool check_endstop_x_max(void) { return check_endstop(ENDSTOP_X_MAX); }
+static bool check_endstop_y_min(void) { return check_endstop(ENDSTOP_Y_MIN); }
+static bool check_endstop_y_max(void) { return check_endstop(ENDSTOP_Y_MAX); }
+static bool check_endstop_z_min(void) { return check_endstop(ENDSTOP_Z_MIN); }
+static bool check_endstop_z_max(void) { return check_endstop(ENDSTOP_Z_MAX); }
+
 static void home_all_axes(void) {
-    // Condição de segurança: executar apenas com Z no topo (0)
-    if (g_current_steps_z != 0) {
-        log_push("Home XY abortado: Z != 0 (Z=%ld)", g_current_steps_z);
-        lcd_update_line(1, "Home XY: Z!=0");
-        return;
+    const bool DIR_X_POSITIVO = false;
+    const bool DIR_Y_POSITIVO = true;
+    const bool DIR_Z_POSITIVO = true;
+    
+    log_push("CNC: Iniciando homing com fins de curso");
+    lcd_update_line(0, "Homing...");
+    
+    lcd_update_line(1, "Homing Z...");
+    while (!check_endstop_z_min()) {
+        step_motor(STEP_PIN_Z, DIR_PIN_Z, !DIR_Z_POSITIVO, STEP_DELAY_Z_US);
+        g_current_steps_z--;
+        if (g_current_steps_z < 0) g_current_steps_z = 0;
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
-
-    // Armazena a ultima posicao conhecida antes do retorno
-    long start_x = g_current_steps_x;
-    long start_y = g_current_steps_y;
-    g_last_target_steps_x = start_x;
-    g_last_target_steps_y = start_y;
-
-    lcd_update_line(1, "Home XY (soft)...");
-    // Mantem Z em 0 e retorna X/Y para 0
-    move_axes_to_steps(0, 0, g_current_steps_z);
-
-    log_push("Home XY software: (%ld,%ld)->(0,0)", start_x, start_y);
-    printf("Home XY (software) concluido.\n");
-    lcd_update_line(1, "Home XY OK");
+    g_current_steps_z = 0;
+    log_push("CNC: Z em home (MIN)");
+    
+    lcd_update_line(1, "Homing X...");
+    while (!check_endstop_x_min()) {
+        step_motor(STEP_PIN_X, DIR_PIN_X, !DIR_X_POSITIVO, STEP_DELAY_XY_US);
+        g_current_steps_x--;
+        if (g_current_steps_x < 0) g_current_steps_x = 0;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    g_current_steps_x = 0;
+    g_last_target_steps_x = 0;
+    log_push("CNC: X em home (MIN)");
+    
+    lcd_update_line(1, "Homing Y...");
+    while (!check_endstop_y_min()) {
+        step_motor(STEP_PIN_Y, DIR_PIN_Y, !DIR_Y_POSITIVO, STEP_DELAY_XY_US);
+        g_current_steps_y--;
+        if (g_current_steps_y < 0) g_current_steps_y = 0;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    g_current_steps_y = 0;
+    g_last_target_steps_y = 0;
+    log_push("CNC: Y em home (MIN)");
+    
+    log_push("CNC: Homing concluido (0,0,0)");
+    printf("Homing concluido! Maquina em (0, 0, 0).\n");
+    lcd_update_line(0, "Status: Pronto");
+    lcd_update_line(1, "Home OK");
 }
 
 // Move os eixos para uma coordenada ABSOLUTA em PASSOS
@@ -857,32 +899,99 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
          max_steps = steps_z;
     }
 
-    // --- Loop de movimento intercalado ---
+    long actual_x = g_current_steps_x;
+    long actual_y = g_current_steps_y;
+    long actual_z = g_current_steps_z;
+    
+    bool x_stopped = false;
+    bool y_stopped = false;
+    bool z_stopped = false;
+    
     for (long i = 0; i < max_steps; i++) {
-        if (i < steps_x) {
-            // Passa o delay de XY
-            step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
-        }
-        if (i < steps_y) {
-            // Passa o delay de XY
-            step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
-        }
-        if (i < steps_z) { 
-            // Passa o delay de Z
-            step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
+        if (!x_stopped && i < steps_x) {
+            if (dir_x == DIR_X_POSITIVO) {
+                if (check_endstop_x_max()) {
+                    x_stopped = true;
+                    log_push("CNC: Fim de curso X MAX atingido");
+                    g_last_target_steps_x = actual_x;
+                } else {
+                    step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
+                    actual_x++;
+                }
+            } else {
+                if (check_endstop_x_min()) {
+                    x_stopped = true;
+                    log_push("CNC: Fim de curso X MIN atingido");
+                    actual_x = 0;
+                    g_last_target_steps_x = 0;
+                } else {
+                    step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
+                    actual_x--;
+                }
+            }
         }
         
-        if(i % 20 == 0) cyw43_arch_poll(); // Mantem o WiFi vivo
+        if (!y_stopped && i < steps_y) {
+            if (dir_y == DIR_Y_POSITIVO) {
+                if (check_endstop_y_max()) {
+                    y_stopped = true;
+                    log_push("CNC: Fim de curso Y MAX atingido");
+                    g_last_target_steps_y = actual_y;
+                } else {
+                    step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
+                    actual_y++;
+                }
+            } else {
+                if (check_endstop_y_min()) {
+                    y_stopped = true;
+                    log_push("CNC: Fim de curso Y MIN atingido");
+                    actual_y = 0;
+                    g_last_target_steps_y = 0;
+                } else {
+                    step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
+                    actual_y--;
+                }
+            }
+        }
+        
+        if (!z_stopped && i < steps_z) {
+            if (dir_z == DIR_Z_POSITIVO) {
+                if (check_endstop_z_max()) {
+                    z_stopped = true;
+                    log_push("CNC: Fim de curso Z MAX atingido");
+                } else {
+                    step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
+                    actual_z++;
+                }
+            } else {
+                if (check_endstop_z_min()) {
+                    z_stopped = true;
+                    log_push("CNC: Fim de curso Z MIN atingido");
+                    actual_z = 0;
+                } else {
+                    step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
+                    actual_z--;
+                }
+            }
+        }
+        
+        if(i % 20 == 0) cyw43_arch_poll();
+        
+        if (x_stopped && y_stopped && z_stopped) {
+            break;
+        }
     }
     
-    // --- Atualiza as posicoes globais de TODOS os eixos ---
-    g_current_steps_x = target_x_steps;
-    g_current_steps_y = target_y_steps;
-    g_current_steps_z = target_z_steps; 
-
-    // Atualiza os ultimos alvos de X/Y 
-    g_last_target_steps_x = target_x_steps;
-    g_last_target_steps_y = target_y_steps;
+    g_current_steps_x = actual_x;
+    g_current_steps_y = actual_y;
+    g_current_steps_z = actual_z;
+    
+    if (!x_stopped) {
+        g_last_target_steps_x = target_x_steps;
+    }
+    if (!y_stopped) {
+        g_last_target_steps_y = target_y_steps;
+    }
 }
 
 // Executa a sequencia completa para pegar ou soltar um pallet
