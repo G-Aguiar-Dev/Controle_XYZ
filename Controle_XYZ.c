@@ -1,5 +1,5 @@
 // Bibliotecas
-#include "pico/stdlib.h"        // Biblioteca padrão do Pico
+#include "pico/stdlib.h"        // Biblioteca padrao do Pico
 #include "hardware/gpio.h"      // Biblioteca de GPIO
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
@@ -7,7 +7,7 @@
 #include "hardware/spi.h"       // Biblioteca de SPI
 
 #include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
-#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulação de TCP/IP
+#include "lwip/tcp.h"           // Biblioteca de LWIP para manipulacao de TCP/IP
 
 #include "FreeRTOS.h"           // Biblioteca de FreeRTOS
 #include "task.h"               // Biblioteca de tasks
@@ -18,21 +18,21 @@
 #include "lib/lcd_1602_i2c.h"   // Biblioteca para Display LCD
 #include "lib/mfrc522.h"        // Biblioteca para o Sensor RFID
 
-#include <stdio.h>              // Biblioteca de entrada e saída padrão
-#include <stdlib.h>             // Biblioteca padrão
+#include <stdio.h>              // Biblioteca de entrada e saida padrao
+#include <stdlib.h>             // Biblioteca padrao
 #include <string.h>             // Biblioteca de strings
 #include <ctype.h>              // Biblioteca de caracteres
-#include <stdarg.h>             // Biblioteca para manipulação de argumentos variáveis
-#include <math.h>               // Biblioteca matemática
+#include <stdarg.h>             // Biblioteca para manipulacao de argumentos variaveis
+#include <math.h>               // Biblioteca matematica
 
-//----------------------------------VÁRIAVEIS GLOBAIS----------------------------------
+//----------------------------------VaRIAVEIS GLOBAIS----------------------------------
 
 #define WIFI_SSID "Armazem XYZ"                    // Nome da rede Wi-Fi
 
 #define WIFI_PASS "tic37#grupo4"                   // Senha da rede Wi-Fi
 
-// Configurações do eletroímã
-#define ELECTROMAGNET_PIN 7    // LED no mesmo pino do eletroímã
+// Configuracoes do eletroima
+#define ELECTROMAGNET_PIN 7    // Pino do eletroima
 
 // Pinos Eixo X
 #define STEP_PIN_X 14
@@ -132,18 +132,18 @@ struct http_state                               // Struct para manter o estado d
     char smallbuf[1024];        // usado para respostas pequenas/JSON
     size_t len;                 // tamanho total da resposta
     size_t sent;
-    size_t offset;              // bytes já enfileirados para envio
+    size_t offset;              // bytes ja enfileirados para envio
     bool using_smallbuf;
 };
 
-// Histórico de logs em memória
+// Historico de logs em memoria
 #define LOG_CAP 120
 #define LOG_LINE_MAX 128
 static char g_log[LOG_CAP][LOG_LINE_MAX];
-static int g_log_head = 0;  // aponta para a próxima posição de escrita
-static int g_log_count = 0; // quantos registros válidos
+static int g_log_head = 0;  // aponta para a proxima posicao de escrita
+static int g_log_count = 0; // quantos registros validos
 
-// Variáveis do eletroímã
+// Variaveis do eletroima
 bool electromagnet_active = false;
 
 MFRC522Ptr_t g_mfrc; // Ponteiro global para a instancia do MFRC522
@@ -153,16 +153,9 @@ static char g_cell_uids[6][UID_STRLEN]; // Armazena a UID de qual pallet esta em
 static SemaphoreHandle_t g_inventory_mutex; // Protege g_cell_uids
 static SemaphoreHandle_t g_lcd_mutex; // Protege g_cell_uids
 
-// Variáveis de controle manual
-static int current_position = 0;  // Posição atual (0-24)
-static bool led_states[25] = {false};  // Estado de cada LED (false = apagado, true = aceso)
-static bool button_a_pressed = false;
-static bool button_b_pressed = false;
-static uint32_t last_button_time = 0;
+//---------------------------------------FUNcoES---------------------------------------
 
-//---------------------------------------FUNÇÕES---------------------------------------
-
-// Funções do servidor HTTP
+// Funcoes do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
@@ -192,23 +185,17 @@ static void log_push(const char *fmt, ...);
 static const char *log_get(int idx);
 static bool scan_for_uid(char* uid_buffer, size_t buffer_len);
 
-// Funções do display LCD I2C
+// Funcoes do display LCD I2C
 void lcd_update_line(int line, const char *fmt, ...);
-
-// Funções de controle manual
-static void inicializa_botoes(void);
-static void processa_botoes(void);
-static void atualiza_display_manual(void);
-static int indice_para_coordenadas(int indice, int *x, int *y);
 
 //----------------------------------------TASKS----------------------------------------
 
-// Task de polling para manter a conexão Wi-Fi ativa
+// Task de polling para manter a conexao Wi-Fi ativa
 void vPollingTask(void *pvParameters)
 {
     while (true)
     {
-        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexão ativa
+        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexao ativa
         vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
     }
 }
@@ -225,7 +212,7 @@ void vMotorControlTask(void *pvParameters)
     lcd_update_line(0, "Iniciando Homing");  
     lcd_update_line(1, "Aguarde...");        
     
-    home_all_axes();
+    home_all_axes();             
 
     // Converte Z_SAFE_MM para passos
     long z_safe_steps = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
@@ -382,13 +369,15 @@ int main()
     panic_unsupported();
 }
 
-//---------------------------------DECLARAÇÃO DAS FUNÇÕES-----------------------------
+//---------------------------------DECLARAcaO DAS FUNcoES-----------------------------
+
+// -------------------- Funcoes Servidor HTTP --------------------
 
 // -------------------- Funções Servidor HTTP --------------------
 
 #define CHUNK_SIZE 1024
 
-// Função para enviar o próximo pedaço de resposta se houver espaço na janela
+// Funcao para enviar o proximo pedaco de resposta se houver espaco na janela
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
 {
     if (hs->offset >= hs->len)
@@ -405,12 +394,12 @@ static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs)
     }
     else if (err != ERR_MEM)
     {
-        // log erro irreversível
+        // log erro irreversivel
         printf("tcp_write fatal: %d\n", err);
     }
 }
 
-// Função de callback para enviar dados HTTP
+// Funcao de callback para enviar dados HTTP
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
 {
     struct http_state *hs = (struct http_state *)arg;
@@ -492,6 +481,11 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     hs->sent = 0;
     hs->offset = 0;
+    hs->using_smallbuf = false;
+    hs->response_ptr = NULL;
+
+    // PROCESSAMENTO DAS ROTAS HTTP
+    if (strstr(req, "GET /api/log?"))
     hs->using_smallbuf = false;
     hs->response_ptr = NULL;
 
@@ -604,9 +598,9 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     else if (strstr(req, "POST /toggle-electromagnet"))
     {
-        // Processar ativação/desativação do eletroímã
+        // Processar ativacao/desativacao do eletroima
         toggle_eletroima();
-        printf("Eletroímã alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
+        printf("Eletroima alternado - Status: %s\n", electromagnet_active ? "Ativado" : "Desativado");
         log_push("Eletroima %s", electromagnet_active ? "ativado" : "desativado");
         
         hs->using_smallbuf = true;
@@ -645,7 +639,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         hs->response_ptr = hs->smallbuf;
     }
     else
-    { // Rota padrão (página principal)
+    { // Rota padrao (pagina principal)
         preencher_html();
         hs->response_ptr = html; // apontar para buffer global
         hs->len = strlen(html);
@@ -660,14 +654,14 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     return ERR_OK;
 }
 
-// Função de callback para aceitar novas conexões TCP
+// Funcao de callback para aceitar novas conexoes TCP
 static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
     tcp_recv(newpcb, http_recv);
     return ERR_OK;
 }
 
-// Função para iniciar o servidor HTTP
+// Funcao para iniciar o servidor HTTP
 static void start_http_server(void)
 {
     struct tcp_pcb *pcb = tcp_new();
@@ -1152,7 +1146,7 @@ static void inicializa_eletroima(void)
     gpio_set_dir(ELECTROMAGNET_PIN, GPIO_OUT);
     gpio_put(ELECTROMAGNET_PIN, 0); // Inicia desativado
     electromagnet_active = false;
-    printf("Eletroímã inicializado no pino %d\n", ELECTROMAGNET_PIN);
+    printf("Eletroima inicializado no pino %d\n", ELECTROMAGNET_PIN);
 }
 
 // Ativa o eletroímã
@@ -1160,7 +1154,7 @@ static void ativar_eletroima(void)
 {
     gpio_put(ELECTROMAGNET_PIN, 1);
     electromagnet_active = true;
-    printf("Eletroímã ativado\n");
+    printf("Eletroima ativado\n");
 }
 
 // Desativa o eletroímã
@@ -1168,7 +1162,7 @@ static void desativar_eletroima(void)
 {
     gpio_put(ELECTROMAGNET_PIN, 0);
     electromagnet_active = false;
-    printf("Eletroímã desativado\n");
+    printf("Eletroima desativado\n");
 }
 
 // Alterna o estado do eletroímã

@@ -13,6 +13,11 @@
 3. Execute o instalador
 4. **IMPORTANTE**: Marque a opção "Add Python to PATH"
 
+### Opção C: Via Terminal (Ubuntu/Linux)
+
+1. sudo apt update
+2. sudo apt install python3 python3-pip python3-venv
+
 ### Opção C: Via winget (se disponível)
 ```powershell
 winget install Python.Python.3.11
@@ -38,6 +43,8 @@ pip install flask requests
 
 ```powershell
 python dbServer.py
+ou
+python3 dbServer.py
 ```
 
 Você deve ver:
@@ -59,20 +66,76 @@ python test_server.py
 
 ## 6. Acessar via Navegador
 
-- **Página inicial**: http://localhost:5000
-- **Ver logs**: http://localhost:5000/api/logs
-- **Status**: http://localhost:5000/api/status
+- **Página inicial**: http://localhost:5000/
+- **Ver Status e Estatísticas**: http://localhost:5000/api/status
+- **Ver Lista de Produtos**: http://localhost:5000/api/products
+- **Ver Lista de Logs**: http://localhost:5000/api/logs
+- **Ver Pallet Específico**: http://localhost:5000/api/pallet/<uid>
 
-## 7. Testar Manualmente
+## 7. Testar Manualmente (Testes POST, PUT, DELETE)
 
-### Adicionar um log:
-```powershell
-curl -X POST http://localhost:5000/api/log -H "Content-Type: application/json" -d "{\"message\":\"Teste manual\", \"level\":\"INFO\"}"
+## Testar produtos
+
+### POST (Exemplo):
+```powershell / bash
+curl -X POST http://localhost:5000/api/products \
+     -H "Content-Type: application/json" \
+     -d "{\"name\": \"Café\", \"default_quantity\": 25}"
+
 ```
 
-### Ver logs:
-```powershell
-curl http://localhost:5000/api/logs
+### PUT (Exemplo):
+```powershell / bash
+curl -X PUT http://localhost:5000/api/products/4 \
+     -H "Content-Type: application/json" \
+     -d "{\"name\": \"Café Especial\", \"default_quantity\": 30}"
+
+```
+
+### DELETE (Exemplo):
+```powershell / bash
+curl -X DELETE http://localhost:5000/api/products/4
+
+```
+
+## Testar pallets
+
+### POST (Exemplo):
+```powershell / bash
+curl -X POST http://localhost:5000/api/pallet/register \
+     -H "Content-Type: application/json" \
+     -d "{\"uid\": \"DD EE FF 00\", \"product_name\": \"Arroz\"}"
+
+```
+
+### PUT (Exemplo):
+```powershell / bash
+curl -X PUT "http://localhost:5000/api/pallet/<uid>" \
+     -H "Content-Type: application/json" \
+     -d "{\"current_quantity\": 10}"
+
+```
+
+### DELETE (Exemplo):
+```powershell / bash
+curl -X DELETE "http://localhost:5000/api/pallet/<uid>"
+
+```
+
+## Testando Logs
+
+### POST (Exemplo):
+```powershell / bash
+curl -X POST http://localhost:5000/api/log \
+     -H "Content-Type: application/json" \
+     -d "{\"message\":\"Teste manual\", \"level\":\"INFO\"}"
+
+```
+
+### DELETE (Deletar todos os logs):
+```powershell / bash
+curl -X DELETE http://localhost:5000/api/clear
+
 ```
 
 ## 8. Integração com o Pico
@@ -126,8 +189,24 @@ projeto/
 
 ## Endpoints da API
 
-- `POST /api/log` - Adicionar log
-- `GET /api/logs` - Listar logs (parâmetros: limit, level)
-- `GET /api/status` - Status do servidor
-- `DELETE /api/clear` - Limpar logs
-- `GET /` - Página inicial
+### Produtos
+
+- `GET /api/products` — Listar todos os produtos
+- `POST /api/products` — Criar novo produto
+- `PUT /api/products/<id>` — Atualizar produto
+- `DELETE /api/products/<id>` — Deletar produto
+
+### Pallets
+
+- `POST /api/pallet/register` — Associar/resetar UID
+- `GET /api/pallet/<uid>` — Consultar pallet específico
+- `PUT /api/pallet/<uid>` — Atualizar quantidade
+- `DELETE /api/pallet/<uid>` — Deletar pallet
+
+### Logs e status
+
+- `GET /` — Página inicial
+- `GET /api/status` — Status e estatísticas
+- `POST /api/log` — Adicionar log
+- `GET /api/logs` — Listar logs
+- `DELETE /api/clear` — Limpar todos os logs
