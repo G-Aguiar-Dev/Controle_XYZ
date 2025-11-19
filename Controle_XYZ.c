@@ -153,6 +153,13 @@ static char g_cell_uids[6][UID_STRLEN]; // Armazena a UID de qual pallet esta em
 static SemaphoreHandle_t g_inventory_mutex; // Protege g_cell_uids
 static SemaphoreHandle_t g_lcd_mutex; // Protege g_cell_uids
 
+// Variáveis de controle manual
+static int current_position = 0;  // Posição atual (0-24)
+static bool led_states[25] = {false};  // Estado de cada LED (false = apagado, true = aceso)
+static bool button_a_pressed = false;
+static bool button_b_pressed = false;
+static uint32_t last_button_time = 0;
+
 //---------------------------------------FUNÇÕES---------------------------------------
 
 // Funções do servidor HTTP
@@ -187,6 +194,12 @@ static bool scan_for_uid(char* uid_buffer, size_t buffer_len);
 
 // Funções do display LCD I2C
 void lcd_update_line(int line, const char *fmt, ...);
+
+// Funções de controle manual
+static void inicializa_botoes(void);
+static void processa_botoes(void);
+static void atualiza_display_manual(void);
+static int indice_para_coordenadas(int indice, int *x, int *y);
 
 //----------------------------------------TASKS----------------------------------------
 

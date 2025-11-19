@@ -49,13 +49,21 @@ Servidor rodando em: http://localhost:5000
 Pressione Ctrl+C para parar o servidor
 ```
 
-## 5. Acessar via Navegador
+## 5. Testar o Servidor
+
+Em outro terminal (deixe o servidor rodando):
+
+```powershell
+python test_server.py
+```
+
+## 6. Acessar via Navegador
 
 - **Página inicial**: http://localhost:5000
 - **Ver logs**: http://localhost:5000/api/logs
 - **Status**: http://localhost:5000/api/status
 
-## 6. Testar Manualmente
+## 7. Testar Manualmente
 
 ### Adicionar um log:
 ```powershell
@@ -67,7 +75,7 @@ curl -X POST http://localhost:5000/api/log -H "Content-Type: application/json" -
 curl http://localhost:5000/api/logs
 ```
 
-## 7. Integração com o Pico
+## 8. Integração com o Pico
 
 1. Descubra o IP do seu computador:
    ```powershell
@@ -110,6 +118,7 @@ Após executar, você terá:
 ```
 projeto/
 ├── dbServer.py          # Servidor Flask
+├── test_server.py       # Script de teste
 ├── controle_xyz.db      # Banco SQLite (criado automaticamente)
 ├── INSTALL.md           # Este arquivo
 └── Controle_XYZ.c       # Código do Pico
