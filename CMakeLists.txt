@@ -1,7 +1,7 @@
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
-else()
+else() 
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.2.0)
@@ -20,7 +20,7 @@ set(PICO_BOARD pico_w CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
 
 # Configuração do FreeRTOS
-set(FREERTOS_KERNEL_PATH "/home/carlos2/FreeRTOS-Kernel")
+set(FREERTOS_KERNEL_PATH "C:/FreeRTOS-Kernel")  # Modifique este caminho conforme necessário
 include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 project(Controle_XYZ C CXX ASM)
