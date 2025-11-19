@@ -1,7 +1,7 @@
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
-else()
+else() 
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.2.0)
@@ -20,7 +20,7 @@ set(PICO_BOARD pico_w CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
 
 # Configuração do FreeRTOS
-set(FREERTOS_KERNEL_PATH "/Users/lamparina/Documentos/cepedi/FreeRTOS-Kernel")
+set(FREERTOS_KERNEL_PATH "C:/FreeRTOS-Kernel")  # Modifique este caminho conforme necessário
 include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 project(Controle_XYZ C CXX ASM)
@@ -30,11 +30,10 @@ include_directories(${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/lib
     ${PICO_SDK_PATH})
 
-
-
 add_executable(${PROJECT_NAME}  
         Controle_XYZ.c 
-        lib/ssd1306.c # Biblioteca para o display OLED
+        lib/lcd_1602_i2c.c # Biblioteca para o display LCD I2C
+        lib/mfrc522.c  # Biblioteca para o leitor RFID
         lib/HTML.c    # Biblioteca para HTML
         )
 
@@ -46,7 +45,7 @@ target_link_libraries(${PROJECT_NAME}
         hardware_i2c
         hardware_adc
         hardware_pwm
-        hardware_pio
+        hardware_spi
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_mbedtls
         FreeRTOS-Kernel 
@@ -56,6 +55,4 @@ target_link_libraries(${PROJECT_NAME}
 pico_enable_stdio_usb(${PROJECT_NAME} 1)
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
 
-# Gera o arquivo header PIO
-pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/pio_matrix.pio)
 pico_add_extra_outputs(${PROJECT_NAME})
