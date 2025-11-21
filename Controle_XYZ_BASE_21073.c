@@ -1,6 +1,5 @@
 // Bibliotecas
 #include "pico/stdlib.h"        // Biblioteca padrao do Pico
-#include "pico/multicore.h"     // Biblioteca para suporte a múltiplos núcleos na Raspberry Pi Pico
 #include "hardware/gpio.h"      // Biblioteca de GPIO
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
@@ -28,8 +27,9 @@
 
 //----------------------------------VaRIAVEIS GLOBAIS----------------------------------
 
-#define WIFI_SSID ""                    // Nome da rede Wi-Fi
-#define WIFI_PASS ""                   // Senha da rede Wi-Fi
+#define WIFI_SSID "Armazem XYZ"                    // Nome da rede Wi-Fi
+
+#define WIFI_PASS "tic37#grupo4"                   // Senha da rede Wi-Fi
 
 // Configuracoes do eletroima
 #define ELECTROMAGNET_PIN 7    // Pino do eletroima
@@ -60,8 +60,8 @@
 #define STEPS_PER_MM_Z 50.0 
 
 typedef struct {
-    float x_mm;       // Distancia X (em mm) do centro da celula
-    float y_mm;       // Distancia Y (em mm) do centro da celula
+    float x_mm;       // Posicao X (em mm) do centro da celula
+    float y_mm;       // Posicao Y (em mm) do centro da celula
 } CellPosition;
 
 // --- DEFINICOES DA CNC 3018 ---
@@ -94,7 +94,7 @@ CellPosition g_cell_map[6] = {
 };
 
 #define Z_TRAVEL_MAX_MM 45.0    // Curso maximo fisico do Eixo Z
-#define Z_SAFE_MM 0.0           // Altura Z segura 
+#define Z_SAFE_MM 0.0           // Altura Z segura (Modificar caso precise de mais espaco)
 #define Z_PICKUP_MM 45.0        // Altura Z para pegar/soltar (45mm abaixo do topo)
 
 // Delay (em microssegundos) entre pulsos do motor. Controla a velocidade.
@@ -110,7 +110,6 @@ volatile long g_current_steps_z = 0;
 volatile long g_last_target_steps_x = 0;
 volatile long g_last_target_steps_y = 0;
 
-// I2C para o display
 #define I2C_PORT i2c0
 #define I2C_SDA 8
 #define I2C_SCL 9
@@ -124,8 +123,7 @@ typedef struct {
     bool is_store_operation;    // true = guardar (soltar), false = retirar (pegar)
 } MovementCommand;
 
-// Struct para manter o estado da conexao HTTP
-struct http_state                               
+struct http_state                               // Struct para manter o estado da conexao HTTP
 {
     const char *response_ptr;   // ponteiro para o buffer com a resposta
     char smallbuf[1024];        // usado para respostas pequenas/JSON
@@ -142,19 +140,17 @@ static char g_log[LOG_CAP][LOG_LINE_MAX];
 static int g_log_head = 0;  // aponta para a proxima posicao de escrita
 static int g_log_count = 0; // quantos registros validos
 
-// Variavel do eletroima
+// Variaveis do eletroima
 bool electromagnet_active = false;
 
 MFRC522Ptr_t g_mfrc; // Ponteiro global para a instancia do MFRC522
 
-#define UID_STRLEN 32                           // Espaco para UID (ex: "12 34 56 78 ")
-static char g_cell_uids[6][UID_STRLEN];         // Armazena a UID de qual pallet esta em qual slot
-static SemaphoreHandle_t g_inventory_mutex;     // Protege g_cell_uids
-static SemaphoreHandle_t g_lcd_mutex;           // Protege g_cell_uids
+#define UID_STRLEN 32 // Espaco para UID (ex: "12 34 56 78 ")
+static char g_cell_uids[6][UID_STRLEN]; // Armazena a UID de qual pallet esta em qual slot
+static SemaphoreHandle_t g_inventory_mutex; // Protege g_cell_uids
+static SemaphoreHandle_t g_lcd_mutex; // Protege g_cell_uids
 
 //---------------------------------------FUNcoES---------------------------------------
-
-void core1_polling(void);
 
 // Funcoes do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
@@ -191,7 +187,8 @@ void lcd_update_line(int line, const char *fmt, ...);
 
 //----------------------------------------TASKS----------------------------------------
 
-void core1_polling() 
+// Task de polling para manter a conexao Wi-Fi ativa
+void vPollingTask(void *pvParameters)
 {
     while (true)
     {
@@ -353,7 +350,6 @@ int main()
 
 
     inicializa_eletroima();
-    multicore_launch_core1(core1_polling);
     start_http_server();
 
     // Cria a fila para 5 comandos de movimento
@@ -366,6 +362,7 @@ int main()
     }
 
     // --- Tasks do FreeRTOS ---
+    xTaskCreate(vPollingTask, "Polling Task", 512, NULL, 1, NULL);
     xTaskCreate(vMotorControlTask, "Motor Task", 1024, NULL, 3, NULL); // Prioridade alta
 
     printf("Iniciando Scheduler do FreeRTOS...\n");

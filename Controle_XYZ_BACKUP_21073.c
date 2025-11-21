@@ -1,6 +1,5 @@
 // Bibliotecas
 #include "pico/stdlib.h"        // Biblioteca padrao do Pico
-#include "pico/multicore.h"     // Biblioteca para suporte a múltiplos núcleos na Raspberry Pi Pico
 #include "hardware/gpio.h"      // Biblioteca de GPIO
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
@@ -154,8 +153,6 @@ static SemaphoreHandle_t g_lcd_mutex;           // Protege g_cell_uids
 
 //---------------------------------------FUNcoES---------------------------------------
 
-void core1_polling(void);
-
 // Funcoes do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
@@ -191,7 +188,8 @@ void lcd_update_line(int line, const char *fmt, ...);
 
 //----------------------------------------TASKS----------------------------------------
 
-void core1_polling() 
+// Task de polling para manter a conexao Wi-Fi ativa
+void vPollingTask(void *pvParameters)
 {
     while (true)
     {
@@ -353,7 +351,6 @@ int main()
 
 
     inicializa_eletroima();
-    multicore_launch_core1(core1_polling);
     start_http_server();
 
     // Cria a fila para 5 comandos de movimento
@@ -366,6 +363,7 @@ int main()
     }
 
     // --- Tasks do FreeRTOS ---
+    xTaskCreate(vPollingTask, "Polling Task", 512, NULL, 1, NULL);
     xTaskCreate(vMotorControlTask, "Motor Task", 1024, NULL, 3, NULL); // Prioridade alta
 
     printf("Iniciando Scheduler do FreeRTOS...\n");
