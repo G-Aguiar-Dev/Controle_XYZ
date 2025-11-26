@@ -193,10 +193,44 @@ void lcd_update_line(int line, const char *fmt, ...);
 
 void core1_polling() 
 {
+    printf("\n=== Inicializando Stack de Rede... ===\n", get_core_num());
+
+    // 1. Inicializa hardware Wi-Fi (NO CORE 1)
+    if (cyw43_arch_init()) {
+        printf("ERRO FATAL: Falha Wi-Fi init\n", get_core_num());
+        return;
+    }
+
+    cyw43_arch_enable_sta_mode();
+    
+    // Atualiza LCD (usando Mutex pois I2C é compartilhado)
+    lcd_update_line(1, "Conectando...");
+    printf("Conectando ao Wi-Fi...\n", get_core_num());
+
+    // 2. Conecta ao Wi-Fi (NO CORE 1)
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 15000)) {
+        printf("ERRO: Falha conexao Wi-Fi\n", get_core_num());
+        lcd_update_line(1, "WIFI CONNECT FALHOU");
+    } else {
+        // Sucesso na conexão
+        uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
+        printf("CONECTADO! IP: %d.%d.%d.%d\n", get_core_num(), ip[0], ip[1], ip[2], ip[3]);
+        
+        char ip_buffer[17];
+        snprintf(ip_buffer, 17, "IP:%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        lcd_update_line(1, ip_buffer);
+        
+        // 3. Inicia Servidor HTTP (NO CORE 1)
+        start_http_server();
+    }
+
+    // 4. Loop infinito de processamento de rede
     while (true)
     {
-        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexao ativa
-        vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
+        // Como o init foi feito neste core, os callbacks virão para cá.
+        cyw43_arch_poll(); 
+        
+        sleep_ms(1); 
     }
 }
 
@@ -305,37 +339,7 @@ int main()
         g_cell_uids[i][0] = '\0';
     }
 
-
-    lcd_update_line(1, "Iniciando WiFi...");
-
-    // --- INICIALIZA WI-FI ---
-    if (cyw43_arch_init()) {
-        printf("Falha ao inicializar o modulo Wi-Fi\n");
-        lcd_update_line(0, "ERRO FATAL");
-        lcd_update_line(1, "WIFI INIT FALHOU");
-        return 1;
-    }
-
-    cyw43_arch_enable_sta_mode();
-    lcd_update_line(1, "Conectando...");
-
-    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
-        printf("Falha ao conectar ao Wi-Fi\n");
-        lcd_update_line(0, "ERRO FATAL");
-        lcd_update_line(1, "WIFI CONNECT");
-        return 1;
-    }
-
-    uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
-    char ip_str[24];
-    snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-    printf("Conectado ao Wi-Fi %s\n", WIFI_SSID);
-    printf("Endereco IP: %s\n", ip_str);
-    
-    // --- FEEDBACK LCD DE SUCESSO ---
-    lcd_update_line(0, "Sistema Online");
-    lcd_update_line(1, "IP: %s", ip_str); // A funcao ja trunca
-    sleep_ms(1000); // Mostra o IP por um tempo
+    multicore_launch_core1(core1_polling);
 
     // --- INICIALIZA RFID ---
     // (Assume que os pinos SPI, CS, RST estao definidos em lib/mfrc522.h)
