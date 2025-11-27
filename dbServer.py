@@ -3,12 +3,21 @@ import sqlite3
 import datetime
 import os
 from flask_cors import CORS
+import hashlib
+import secrets
+from datetime import datetime, timedelta
+import jwt
+from functools import wraps
 
 app = Flask(__name__)
 CORS(app)  # Permite requisicoes CORS
 
-# --- [NOVO] Adicionado para mostrar 'Açúcar' e 'Feijão' corretamente ---
+# Mostra JSON com caracteres UTF-8 corretamente
 app.config['JSON_AS_ASCII'] = False
+
+JWT_SECRET = "password1234"  # Chave de acesso (Modificar)
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = 8
 
 # Configuração do banco de dados
 DB_PATH = 'dbServer.db'
@@ -18,55 +27,138 @@ def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
     
-    # Habilita o suporte a chaves estrangeiras (importante para o DELETE)
-    cursor.execute("PRAGMA foreign_keys = ON;")
-    
-    # --- Tabela de Logs ---
+    # Tabela de Usuários
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS logs (
+        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'operator',
+            is_active BOOLEAN DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_login DATETIME,
+            failed_attempts INTEGER DEFAULT 0,
+            locked_until DATETIME
+        )
+    ''')
+    
+    # Tabela de Sessões
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            ip_address TEXT,
+            user_agent TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL,
+            is_active BOOLEAN DEFAULT 1,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+    
+    # Tabela de Auditoria
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action TEXT NOT NULL,
+            resource TEXT,
+            details TEXT,
+            ip_address TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            message TEXT NOT NULL,
-            device_ip TEXT,
-            level TEXT DEFAULT 'INFO'
-        )
-    ''')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON logs(timestamp)')
-    
-    # --- Tabela de Produtos ---
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            default_quantity INTEGER DEFAULT 50
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
         )
     ''')
     
-    # --- Tabela de Pallets ---
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS pallets (
-            uid TEXT PRIMARY KEY,
-            product_id INTEGER NOT NULL,
-            current_quantity INTEGER NOT NULL,
-            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE RESTRICT
-        )
-    ''')
-    
-    # --- Adicionar dados experimentais (Corrigido para UTF-8) ---
+    # Criar usuário admin padrão
     try:
-        cursor.execute("INSERT OR IGNORE INTO products (id, name, default_quantity) VALUES (1, 'Açúcar', 50)")
-        cursor.execute("INSERT OR IGNORE INTO products (id, name, default_quantity) VALUES (2, 'Feijão', 30)")
-        cursor.execute("INSERT OR IGNORE INTO products (id, name, default_quantity) VALUES (3, 'Arroz', 40)")
-    except sqlite3.Error as e:
-        print(f"Erro ao inserir dados experimentais: {e}")
-        
+        admin_password = hash_password("admin123")  # Modificar
+        cursor.execute(
+            "INSERT OR IGNORE INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+            (1, "admin", "admin@armazem.local", admin_password, "admin")
+        )
+    except:
+        pass
+    
     conn.commit()
     conn.close()
     print(f"Banco de dados inicializado com tabelas de Log e Inventário: {DB_PATH}")
 
+def hash_password(password):
+    """Hash de senha com salt"""
+    salt = secrets.token_hex(32)
+    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+    return f"{salt}${pwd_hash.hex()}"
+
+def verify_password(password, password_hash):
+    """Verifica senha contra hash"""
+    try:
+        salt, pwd_hash = password_hash.split('$')
+        new_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+        return new_hash.hex() == pwd_hash
+    except:
+        return False
+
+def generate_token(user_id):
+    """Gera JWT token"""
+    payload = {
+        'user_id': user_id,
+        'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+        'iat': datetime.utcnow()
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def verify_token(token):
+    """Valida JWT token"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except:
+        return None
+
+def token_required(f):
+    """Decorator para rotas protegidas"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'Token ausente'}), 401
+        
+        # Remove 'Bearer ' se presente
+        if token.startswith('Bearer '):
+            token = token[7:]
+        
+        payload = verify_token(token)
+        if not payload:
+            return jsonify({'error': 'Token inválido ou expirado'}), 401
+        
+        request.user_id = payload['user_id']
+        return f(*args, **kwargs)
+    
+    return decorated
+
+def audit_log(action, resource=None, details=None):
+    """Registra ação na auditoria"""
+    try:
+        user_id = getattr(request, 'user_id', None)
+        ip_address = request.remote_addr
+        
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute(
+            '''INSERT INTO audit_logs (user_id, action, resource, details, ip_address) 
+               VALUES (?, ?, ?, ?, ?)''',
+            (user_id, action, resource, details, ip_address)
+        )
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
 # ===================================================================
-# ENDPOINTS DE PRODUTOS (Products) - CRUD COMPLETO
+# ENDPOINTS DE PRODUTOS (Products)
 # ===================================================================
 
 @app.route('/api/products', methods=['GET'])
@@ -471,3 +563,4 @@ if __name__ == '__main__':
     print("Pressione Ctrl+C para parar o servidor")
     
     app.run(host='0.0.0.0', port=5000, debug=True)
+
