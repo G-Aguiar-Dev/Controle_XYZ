@@ -1,3 +1,6 @@
+#Modificar chaves de acesso e senhas padrão
+#Linhas com #[MODIFICAR]: 21 e 80
+
 from flask import Flask, request, jsonify
 import sqlite3
 import datetime
@@ -15,7 +18,7 @@ CORS(app)  # Permite requisicoes CORS
 # Mostra JSON com caracteres UTF-8 corretamente
 app.config['JSON_AS_ASCII'] = False
 
-JWT_SECRET = "password1234"  # Chave de acesso (Modificar)
+JWT_SECRET = "password1234" #[MODIFICAR] # Chave de acesso
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 8
 
@@ -74,7 +77,7 @@ def init_db():
     
     # Criar usuário admin padrão
     try:
-        admin_password = hash_password("admin123")  # Modificar
+        admin_password = hash_password("admin123")  #[MODIFICAR] # Senha padrão do admin
         cursor.execute(
             "INSERT OR IGNORE INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)",
             (1, "admin", "admin@armazem.local", admin_password, "admin")
