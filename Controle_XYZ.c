@@ -153,6 +153,17 @@ static char g_cell_uids[6][UID_STRLEN]; // Armazena a UID de qual pallet esta em
 static SemaphoreHandle_t g_inventory_mutex; // Protege g_cell_uids
 static SemaphoreHandle_t g_lcd_mutex; // Protege g_cell_uids
 
+// Estrutura para armazenar tokens válidos em memória
+#define MAX_ACTIVE_TOKENS 10
+typedef struct {
+    char token[512];
+    uint32_t timestamp;
+    bool active;
+} Token;
+
+static Token active_tokens[MAX_ACTIVE_TOKENS];
+static int token_count = 0;
+
 //---------------------------------------FUNcoES---------------------------------------
 
 // Funcoes do servidor HTTP
@@ -187,6 +198,12 @@ static bool scan_for_uid(char* uid_buffer, size_t buffer_len);
 
 // Funcoes do display LCD I2C
 void lcd_update_line(int line, const char *fmt, ...);
+
+// Função para validar token
+static bool validate_token(const char *token);
+
+// Extrair token do header Authorization
+static bool extract_token(const char *req, char *token_out, size_t out_len);
 
 //----------------------------------------TASKS----------------------------------------
 
@@ -733,6 +750,36 @@ static bool query_param(const char *req, const char *key, char *out, size_t outs
     }
     return false;
 }
+
+// Função para validar token
+static bool validate_token(const char *token) {
+    // Simples validação em memória
+    for (int i = 0; i < token_count; i++) {
+        if (active_tokens[i].active && strcmp(active_tokens[i].token, token) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Extrair token do header Authorization
+static bool extract_token(const char *req, char *token_out, size_t out_len) {
+    const char *auth_header = strstr(req, "Authorization: Bearer ");
+    if (!auth_header) return false;
+    
+    auth_header += 22; // Pula "Authorization: Bearer "
+    const char *end = strchr(auth_header, '\r');
+    if (!end) end = strchr(auth_header, '\n');
+    if (!end) return false;
+    
+    size_t len = end - auth_header;
+    if (len >= out_len) return false;
+    
+    memcpy(token_out, auth_header, len);
+    token_out[len] = '\0';
+    return true;
+}
+
 // -------------------- FUNÇÕES DO XYZ --------------------
 
 // Converte o indice (0-5) para o nome do slot (ex: "A1")
