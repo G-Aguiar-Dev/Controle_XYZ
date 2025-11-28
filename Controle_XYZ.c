@@ -1,5 +1,6 @@
 // Bibliotecas
 #include "pico/stdlib.h"        // Biblioteca padrao do Pico
+#include "pico/multicore.h"     // Biblioteca para suporte a múltiplos núcleos na Raspberry Pi Pico
 #include "hardware/gpio.h"      // Biblioteca de GPIO
 #include "hardware/adc.h"       // Biblioteca de ADC
 #include "hardware/i2c.h"       // Biblioteca de I2C
@@ -14,7 +15,7 @@
 #include "queue.h"              // Biblioteca de listas
 #include "semphr.h"             // Biblioteca para Mutex/Semaforos
 
-#include "lib/HTML.h"           // Biblioteca para geração de HTML
+#include "lib/HTML.h"           // Biblioteca para geracao de HTML
 #include "lib/lcd_1602_i2c.h"   // Biblioteca para Display LCD
 #include "lib/mfrc522.h"        // Biblioteca para o Sensor RFID
 
@@ -27,9 +28,8 @@
 
 //----------------------------------VaRIAVEIS GLOBAIS----------------------------------
 
-#define WIFI_SSID "Armazem XYZ"                    // Nome da rede Wi-Fi
-
-#define WIFI_PASS "tic37#grupo4"                   // Senha da rede Wi-Fi
+#define WIFI_SSID ""                    // Nome da rede Wi-Fi
+#define WIFI_PASS ""                   // Senha da rede Wi-Fi
 
 // Configuracoes do eletroima
 #define ELECTROMAGNET_PIN 7    // Pino do eletroima
@@ -38,22 +38,19 @@
 #define STEP_PIN_X 14
 #define DIR_PIN_X 15
 #define ENA_PIN_X 16
-#define ENDSTOP_X_MIN 10
-#define ENDSTOP_X_MAX 13
+#define ENDSTOP_PIN_X 10 
 
 // Pinos Eixo Y
 #define STEP_PIN_Y 1
 #define DIR_PIN_Y 2
 #define ENA_PIN_Y 0
-#define ENDSTOP_Y_MIN 11
-#define ENDSTOP_Y_MAX 17
+#define ENDSTOP_PIN_Y 11 
 
 // Pinos Eixo Z
 #define STEP_PIN_Z 21
 #define DIR_PIN_Z 22
 #define ENA_PIN_Z 20
-#define ENDSTOP_Z_MIN 12
-#define ENDSTOP_Z_MAX 18 
+#define ENDSTOP_PIN_Z 12 
 
 
 // Ex: (200 * 8 micro) / 8mm avanco = 200.0
@@ -63,8 +60,8 @@
 #define STEPS_PER_MM_Z 50.0 
 
 typedef struct {
-    float x_mm;       // Posicao X (em mm) do centro da celula
-    float y_mm;       // Posicao Y (em mm) do centro da celula
+    float x_mm;       // Distancia X (em mm) do centro da celula
+    float y_mm;       // Distancia Y (em mm) do centro da celula
 } CellPosition;
 
 // --- DEFINICOES DA CNC 3018 ---
@@ -97,7 +94,7 @@ CellPosition g_cell_map[6] = {
 };
 
 #define Z_TRAVEL_MAX_MM 45.0    // Curso maximo fisico do Eixo Z
-#define Z_SAFE_MM 0.0           // Altura Z segura (Modificar caso precise de mais espaço)
+#define Z_SAFE_MM 0.0           // Altura Z segura 
 #define Z_PICKUP_MM 45.0        // Altura Z para pegar/soltar (45mm abaixo do topo)
 
 // Delay (em microssegundos) entre pulsos do motor. Controla a velocidade.
@@ -113,6 +110,7 @@ volatile long g_current_steps_z = 0;
 volatile long g_last_target_steps_x = 0;
 volatile long g_last_target_steps_y = 0;
 
+// I2C para o display
 #define I2C_PORT i2c0
 #define I2C_SDA 8
 #define I2C_SCL 9
@@ -126,7 +124,8 @@ typedef struct {
     bool is_store_operation;    // true = guardar (soltar), false = retirar (pegar)
 } MovementCommand;
 
-struct http_state                               // Struct para manter o estado da conexão HTTP
+// Struct para manter o estado da conexao HTTP
+struct http_state                               
 {
     const char *response_ptr;   // ponteiro para o buffer com a resposta
     char smallbuf[1024];        // usado para respostas pequenas/JSON
@@ -143,15 +142,15 @@ static char g_log[LOG_CAP][LOG_LINE_MAX];
 static int g_log_head = 0;  // aponta para a proxima posicao de escrita
 static int g_log_count = 0; // quantos registros validos
 
-// Variaveis do eletroima
+// Variavel do eletroima
 bool electromagnet_active = false;
 
 MFRC522Ptr_t g_mfrc; // Ponteiro global para a instancia do MFRC522
 
-#define UID_STRLEN 32 // Espaco para UID (ex: "12 34 56 78 ")
-static char g_cell_uids[6][UID_STRLEN]; // Armazena a UID de qual pallet esta em qual slot
-static SemaphoreHandle_t g_inventory_mutex; // Protege g_cell_uids
-static SemaphoreHandle_t g_lcd_mutex; // Protege g_cell_uids
+#define UID_STRLEN 32                           // Espaco para UID (ex: "12 34 56 78 ")
+static char g_cell_uids[6][UID_STRLEN];         // Armazena a UID de qual pallet esta em qual slot
+static SemaphoreHandle_t g_inventory_mutex;     // Protege g_cell_uids
+static SemaphoreHandle_t g_lcd_mutex;           // Protege g_cell_uids
 
 // Estrutura para armazenar tokens válidos em memória
 #define MAX_ACTIVE_TOKENS 10
@@ -166,6 +165,8 @@ static int token_count = 0;
 
 //---------------------------------------FUNcoES---------------------------------------
 
+void core1_polling(void);
+
 // Funcoes do servidor HTTP
 static void send_next_chunk(struct tcp_pcb *tpcb, struct http_state *hs);
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
@@ -176,7 +177,7 @@ static int url_hex(char c);
 static void url_decode_inplace(char *s);
 static bool query_param(const char *req, const char *key, char *out, size_t outsz);
 
-// Funções para movimentação dos eixos
+// Funcoes para movimentacao dos eixos
 static void init_cnc_pins(void);
 static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_us);
 static void home_all_axes(void);
@@ -185,13 +186,13 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation);
 static int slot_para_indice(char *slot); 
 static const char* indice_para_slot(int idx);
 
-// Funções do eletroímã
+// Funcoes do eletroima
 static void inicializa_eletroima(void);
 static void ativar_eletroima(void);
 static void desativar_eletroima(void);
 static void toggle_eletroima(void);
 
-// Funções de log
+// Funcoes de log
 static void log_push(const char *fmt, ...);
 static const char *log_get(int idx);
 static bool scan_for_uid(char* uid_buffer, size_t buffer_len);
@@ -207,13 +208,46 @@ static bool extract_token(const char *req, char *token_out, size_t out_len);
 
 //----------------------------------------TASKS----------------------------------------
 
-// Task de polling para manter a conexao Wi-Fi ativa
-void vPollingTask(void *pvParameters)
+void core1_polling() 
 {
+    printf("\n=== Inicializando Stack de Rede... ===\n", get_core_num());
+
+    // 1. Inicializa hardware Wi-Fi (NO CORE 1)
+    if (cyw43_arch_init()) {
+        printf("ERRO FATAL: Falha Wi-Fi init\n", get_core_num());
+        return;
+    }
+
+    cyw43_arch_enable_sta_mode();
+    
+    // Atualiza LCD (usando Mutex pois I2C é compartilhado)
+    lcd_update_line(1, "Conectando...");
+    printf("Conectando ao Wi-Fi...\n", get_core_num());
+
+    // 2. Conecta ao Wi-Fi (NO CORE 1)
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 15000)) {
+        printf("ERRO: Falha conexao Wi-Fi\n", get_core_num());
+        lcd_update_line(1, "WIFI CONNECT FALHOU");
+    } else {
+        // Sucesso na conexão
+        uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
+        printf("CONECTADO! IP: %d.%d.%d.%d\n", get_core_num(), ip[0], ip[1], ip[2], ip[3]);
+        
+        char ip_buffer[17];
+        snprintf(ip_buffer, 17, "IP:%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        lcd_update_line(1, ip_buffer);
+        
+        // 3. Inicia Servidor HTTP (NO CORE 1)
+        start_http_server();
+    }
+
+    // 4. Loop infinito de processamento de rede
     while (true)
     {
-        cyw43_arch_poll(); // Polling do Wi-Fi para manter a conexao ativa
-        vTaskDelay(1000);  // Aguarda 1 segundo antes de repetir
+        // Como o init foi feito neste core, os callbacks virão para cá.
+        cyw43_arch_poll(); 
+        
+        sleep_ms(1); 
     }
 }
 
@@ -229,7 +263,12 @@ void vMotorControlTask(void *pvParameters)
     lcd_update_line(0, "Iniciando Homing");  
     lcd_update_line(1, "Aguarde...");        
     
-    home_all_axes();             
+    //home_all_axes();
+    
+    printf("Homing concluido! Maquina em (0, 0, 0).\n");
+    log_push("CNC: Homing concluido.");
+    lcd_update_line(0, "Status: Pronto");  
+    lcd_update_line(1, "");             
 
     // Converte Z_SAFE_MM para passos
     long z_safe_steps = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
@@ -245,7 +284,7 @@ void vMotorControlTask(void *pvParameters)
         // Aguarda um comando da fila (vindo do http_recv)
         if (xQueueReceive(g_movement_queue, &cmd, portMAX_DELAY) == pdPASS)
         {
-            // Verifica se é um comando de home (cell_index == -1)
+            // Verifica se e um comando de home (cell_index == -1)
             if (cmd.cell_index == -1) {
                 printf("Comando de HOME recebido. Retornando a (0,0,0)...\n");
                 log_push("CNC: Retornando ao home (0,0,0)");
@@ -260,7 +299,7 @@ void vMotorControlTask(void *pvParameters)
                 lcd_update_line(0, "Status: Pronto");
                 lcd_update_line(1, "Home OK");
             } else {
-                // Comando normal de célula
+                // Comando normal de celula
                 printf("Comando recebido: Celula %d, Operacao: %s\n", 
                        cmd.cell_index, cmd.is_store_operation ? "GUARDAR" : "RETIRAR");
                 
@@ -317,37 +356,7 @@ int main()
         g_cell_uids[i][0] = '\0';
     }
 
-
-    lcd_update_line(1, "Iniciando WiFi...");
-
-    // --- INICIALIZA WI-FI ---
-    if (cyw43_arch_init()) {
-        printf("Falha ao inicializar o modulo Wi-Fi\n");
-        lcd_update_line(0, "ERRO FATAL");
-        lcd_update_line(1, "WIFI INIT FALHOU");
-        return 1;
-    }
-
-    cyw43_arch_enable_sta_mode();
-    lcd_update_line(1, "Conectando...");
-
-    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
-        printf("Falha ao conectar ao Wi-Fi\n");
-        lcd_update_line(0, "ERRO FATAL");
-        lcd_update_line(1, "WIFI CONNECT");
-        return 1;
-    }
-
-    uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
-    char ip_str[24];
-    snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-    printf("Conectado ao Wi-Fi %s\n", WIFI_SSID);
-    printf("Endereco IP: %s\n", ip_str);
-    
-    // --- FEEDBACK LCD DE SUCESSO ---
-    lcd_update_line(0, "Sistema Online");
-    lcd_update_line(1, "IP: %s", ip_str); // A funcao ja trunca
-    sleep_ms(1000); // Mostra o IP por um tempo
+    multicore_launch_core1(core1_polling);
 
     // --- INICIALIZA RFID ---
     // (Assume que os pinos SPI, CS, RST estao definidos em lib/mfrc522.h)
@@ -365,6 +374,7 @@ int main()
 
 
     inicializa_eletroima();
+    multicore_launch_core1(core1_polling);
     start_http_server();
 
     // Cria a fila para 5 comandos de movimento
@@ -377,7 +387,6 @@ int main()
     }
 
     // --- Tasks do FreeRTOS ---
-    xTaskCreate(vPollingTask, "Polling Task", 512, NULL, 1, NULL);
     xTaskCreate(vMotorControlTask, "Motor Task", 1024, NULL, 3, NULL); // Prioridade alta
 
     printf("Iniciando Scheduler do FreeRTOS...\n");
@@ -389,8 +398,6 @@ int main()
 //---------------------------------DECLARAcaO DAS FUNcoES-----------------------------
 
 // -------------------- Funcoes Servidor HTTP --------------------
-
-// -------------------- Funções Servidor HTTP --------------------
 
 #define CHUNK_SIZE 1024
 
@@ -433,7 +440,7 @@ static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
     return ERR_OK;
 }
 
-// Função para escanear por um cartão RFID e obter sua UID
+// Funcao para escanear por um cartao RFID e obter sua UID
 static bool scan_for_uid(char* uid_buffer, size_t buffer_len) {
     if (g_mfrc == NULL) return false;
     
@@ -463,7 +470,7 @@ static bool scan_for_uid(char* uid_buffer, size_t buffer_len) {
     return false; // Nao encontrou
 }
 
-// Função de callback para receber dados HTTP
+// Funcao de callback para receber dados HTTP
 static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
     if (!p)
@@ -626,7 +633,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     else if (strstr(req, "GET /api/electromagnet-status"))
     {
-        // Retorna o status atual do eletroímã
+        // Retorna o status atual do eletroima
         hs->using_smallbuf = true;
         hs->len = snprintf(hs->smallbuf, sizeof(hs->smallbuf), 
                           "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"active\":%s}",
@@ -640,9 +647,9 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
         log_push("Web: Solicitacao de retorno ao home (0,0,0)");
         
         // Cria um comando especial para retornar ao home
-        // Usamos um índice negativo para indicar que é um comando de home
+        // Usamos um indice negativo para indicar que e um comando de home
         MovementCommand home_cmd;
-        home_cmd.cell_index = -1; // Código especial para home
+        home_cmd.cell_index = -1; // Codigo especial para home
         home_cmd.is_store_operation = false;
         
         if (xQueueSend(g_movement_queue, &home_cmd, 0) == pdPASS) {
@@ -697,7 +704,7 @@ static void start_http_server(void)
     printf("Servidor HTTP rodando na porta 80...\n");
 }
 
-// Simples utilitários para parsing de URL/query
+// Simples utilitarios para parsing de URL/query
 static int url_hex(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -726,7 +733,7 @@ static void url_decode_inplace(char *s) {
     *w = '\0';
 }
 
-// Procura key na query string da primeira linha (após '?') e copia o valor decodificado
+// Procura key na query string da primeira linha (apos '?') e copia o valor decodificado
 static bool query_param(const char *req, const char *key, char *out, size_t outsz) {
     const char *q = strchr(req, '?');
     if (!q) return false;
@@ -835,27 +842,16 @@ static void init_cnc_pins(void) {
     gpio_put(ENA_PIN_X, 0);
     gpio_put(ENA_PIN_Y, 0);
     gpio_put(ENA_PIN_Z, 0);
-    
-    gpio_init(ENDSTOP_X_MIN);
-    gpio_set_dir(ENDSTOP_X_MIN, GPIO_IN);
-    gpio_pull_up(ENDSTOP_X_MIN);
-    gpio_init(ENDSTOP_X_MAX);
-    gpio_set_dir(ENDSTOP_X_MAX, GPIO_IN);
-    gpio_pull_up(ENDSTOP_X_MAX);
-    
-    gpio_init(ENDSTOP_Y_MIN);
-    gpio_set_dir(ENDSTOP_Y_MIN, GPIO_IN);
-    gpio_pull_up(ENDSTOP_Y_MIN);
-    gpio_init(ENDSTOP_Y_MAX);
-    gpio_set_dir(ENDSTOP_Y_MAX, GPIO_IN);
-    gpio_pull_up(ENDSTOP_Y_MAX);
-    
-    gpio_init(ENDSTOP_Z_MIN);
-    gpio_set_dir(ENDSTOP_Z_MIN, GPIO_IN);
-    gpio_pull_up(ENDSTOP_Z_MIN);
-    gpio_init(ENDSTOP_Z_MAX);
-    gpio_set_dir(ENDSTOP_Z_MAX, GPIO_IN);
-    gpio_pull_up(ENDSTOP_Z_MAX);
+    // Pinos de Fim de Curso (Entrada com Pull-up)
+    gpio_init(ENDSTOP_PIN_X);
+    gpio_set_dir(ENDSTOP_PIN_X, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_X); 
+    gpio_init(ENDSTOP_PIN_Y);
+    gpio_set_dir(ENDSTOP_PIN_Y, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_Y);
+    gpio_init(ENDSTOP_PIN_Z);
+    gpio_set_dir(ENDSTOP_PIN_Z, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_Z);
     
     printf("Pinos da CNC inicializados.\n");
 }
@@ -870,67 +866,34 @@ static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_u
     sleep_us(delay_us); // <-- Usa o delay passado como argumento
 }
 
-static bool check_endstop(uint pin) {
-    return gpio_get(pin) == 0;
-}
-
-static bool check_endstop_x_min(void) { return check_endstop(ENDSTOP_X_MIN); }
-static bool check_endstop_x_max(void) { return check_endstop(ENDSTOP_X_MAX); }
-static bool check_endstop_y_min(void) { return check_endstop(ENDSTOP_Y_MIN); }
-static bool check_endstop_y_max(void) { return check_endstop(ENDSTOP_Y_MAX); }
-static bool check_endstop_z_min(void) { return check_endstop(ENDSTOP_Z_MIN); }
-static bool check_endstop_z_max(void) { return check_endstop(ENDSTOP_Z_MAX); }
-
+// Rotina de Homing (Zera a maquina)
 static void home_all_axes(void) {
-    const bool DIR_X_POSITIVO = false;
-    const bool DIR_Y_POSITIVO = true;
-    const bool DIR_Z_POSITIVO = true;
-    
-    log_push("CNC: Iniciando homing com fins de curso");
-    lcd_update_line(0, "Homing...");
-    
-    lcd_update_line(1, "Homing Z...");
-    while (!check_endstop_z_min()) {
-        step_motor(STEP_PIN_Z, DIR_PIN_Z, !DIR_Z_POSITIVO, STEP_DELAY_Z_US);
-        g_current_steps_z--;
-        if (g_current_steps_z < 0) g_current_steps_z = 0;
-        vTaskDelay(pdMS_TO_TICKS(1));
+    // Condicao de seguranca: executar apenas com Z no topo (0)
+    if (g_current_steps_z != 0) {
+        log_push("Home XY abortado: Z != 0 (Z=%ld)", g_current_steps_z);
+        lcd_update_line(1, "Home XY: Z!=0");
+        return;
     }
-    g_current_steps_z = 0;
-    log_push("CNC: Z em home (MIN)");
-    
-    lcd_update_line(1, "Homing X...");
-    while (!check_endstop_x_min()) {
-        step_motor(STEP_PIN_X, DIR_PIN_X, !DIR_X_POSITIVO, STEP_DELAY_XY_US);
-        g_current_steps_x--;
-        if (g_current_steps_x < 0) g_current_steps_x = 0;
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-    g_current_steps_x = 0;
-    g_last_target_steps_x = 0;
-    log_push("CNC: X em home (MIN)");
-    
-    lcd_update_line(1, "Homing Y...");
-    while (!check_endstop_y_min()) {
-        step_motor(STEP_PIN_Y, DIR_PIN_Y, !DIR_Y_POSITIVO, STEP_DELAY_XY_US);
-        g_current_steps_y--;
-        if (g_current_steps_y < 0) g_current_steps_y = 0;
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-    g_current_steps_y = 0;
-    g_last_target_steps_y = 0;
-    log_push("CNC: Y em home (MIN)");
-    
-    log_push("CNC: Homing concluido (0,0,0)");
-    printf("Homing concluido! Maquina em (0, 0, 0).\n");
-    lcd_update_line(0, "Status: Pronto");
-    lcd_update_line(1, "Home OK");
+
+    // Armazena a ultima posicao conhecida antes do retorno
+    long start_x = g_current_steps_x;
+    long start_y = g_current_steps_y;
+    g_last_target_steps_x = start_x;
+    g_last_target_steps_y = start_y;
+
+    lcd_update_line(1, "Home XY (soft)...");
+    // Mantem Z em 0 e retorna X/Y para 0
+    move_axes_to_steps(0, 0, g_current_steps_z);
+
+    log_push("Home XY software: (%ld,%ld)->(0,0)", start_x, start_y);
+    printf("Home XY (software) concluido.\n");
+    lcd_update_line(1, "Home XY OK");
 }
 
 // Move os eixos para uma coordenada ABSOLUTA em PASSOS
 static void move_axes_to_steps(long target_x_steps, long target_y_steps, long target_z_steps) {
     
-    const bool DIR_X_POSITIVO = false;  // Lógica invertida para X
+    const bool DIR_X_POSITIVO = false;  // Logica invertida para X
     const bool DIR_Y_POSITIVO = true;
     const bool DIR_Z_POSITIVO = true;
 
@@ -953,99 +916,32 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
          max_steps = steps_z;
     }
 
-    long actual_x = g_current_steps_x;
-    long actual_y = g_current_steps_y;
-    long actual_z = g_current_steps_z;
-    
-    bool x_stopped = false;
-    bool y_stopped = false;
-    bool z_stopped = false;
-    
+    // --- Loop de movimento intercalado ---
     for (long i = 0; i < max_steps; i++) {
-        if (!x_stopped && i < steps_x) {
-            if (dir_x == DIR_X_POSITIVO) {
-                if (check_endstop_x_max()) {
-                    x_stopped = true;
-                    log_push("CNC: Fim de curso X MAX atingido");
-                    g_last_target_steps_x = actual_x;
-                } else {
-                    step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
-                    actual_x++;
-                }
-            } else {
-                if (check_endstop_x_min()) {
-                    x_stopped = true;
-                    log_push("CNC: Fim de curso X MIN atingido");
-                    actual_x = 0;
-                    g_last_target_steps_x = 0;
-                } else {
-                    step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
-                    actual_x--;
-                }
-            }
+        if (i < steps_x) {
+            // Passa o delay de XY
+            step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
+        }
+        if (i < steps_y) {
+            // Passa o delay de XY
+            step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
+        }
+        if (i < steps_z) { 
+            // Passa o delay de Z
+            step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
         }
         
-        if (!y_stopped && i < steps_y) {
-            if (dir_y == DIR_Y_POSITIVO) {
-                if (check_endstop_y_max()) {
-                    y_stopped = true;
-                    log_push("CNC: Fim de curso Y MAX atingido");
-                    g_last_target_steps_y = actual_y;
-                } else {
-                    step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
-                    actual_y++;
-                }
-            } else {
-                if (check_endstop_y_min()) {
-                    y_stopped = true;
-                    log_push("CNC: Fim de curso Y MIN atingido");
-                    actual_y = 0;
-                    g_last_target_steps_y = 0;
-                } else {
-                    step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
-                    actual_y--;
-                }
-            }
-        }
-        
-        if (!z_stopped && i < steps_z) {
-            if (dir_z == DIR_Z_POSITIVO) {
-                if (check_endstop_z_max()) {
-                    z_stopped = true;
-                    log_push("CNC: Fim de curso Z MAX atingido");
-                } else {
-                    step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
-                    actual_z++;
-                }
-            } else {
-                if (check_endstop_z_min()) {
-                    z_stopped = true;
-                    log_push("CNC: Fim de curso Z MIN atingido");
-                    actual_z = 0;
-                } else {
-                    step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
-                    actual_z--;
-                }
-            }
-        }
-        
-        if(i % 20 == 0) cyw43_arch_poll();
-        
-        if (x_stopped && y_stopped && z_stopped) {
-            break;
-        }
+        if(i % 20 == 0) cyw43_arch_poll(); // Mantem o WiFi vivo
     }
     
-    g_current_steps_x = actual_x;
-    g_current_steps_y = actual_y;
-    g_current_steps_z = actual_z;
-    
-    if (!x_stopped) {
-        g_last_target_steps_x = target_x_steps;
-    }
-    if (!y_stopped) {
-        g_last_target_steps_y = target_y_steps;
-    }
+    // --- Atualiza as posicoes globais de TODOS os eixos ---
+    g_current_steps_x = target_x_steps;
+    g_current_steps_y = target_y_steps;
+    g_current_steps_z = target_z_steps; 
+
+    // Atualiza os ultimos alvos de X/Y 
+    g_last_target_steps_x = target_x_steps;
+    g_last_target_steps_y = target_y_steps;
 }
 
 // Executa a sequencia completa para pegar ou soltar um pallet
@@ -1067,7 +963,7 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
     long z_safe_steps   = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
     long z_pickup_steps = (long)(Z_PICKUP_MM * STEPS_PER_MM_Z);
 
-    // A sua solicitação pede para "retornar a posição 0".
+    // A sua solicitacao pede para "retornar a posicao 0".
     long z_return_steps = 0; // Z em 0 (topo)
 
     char op_str[16];
@@ -1101,7 +997,7 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
 
     if (is_pickup_operation) {
 
-        // RFID ainda não foi implementado, código inutilizado
+        // RFID ainda nao foi implementado, codigo inutilizado
 
         // --- LoGICA DE RETIRADA (REGRA 2) ---
         /*if (!pallet_present) {
@@ -1164,7 +1060,7 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
         }
     }
 
-    // 3.5. --- LÓGICA DE RETORNO DO Z ---
+    // 3.5. --- LoGICA DE RETORNO DO Z ---
     
     lcd_update_line(1, "Retornando Z..."); // <- FEEDBACK LCD
     move_axes_to_steps(g_current_steps_x, g_current_steps_y, z_return_steps); // Move Z para 0
@@ -1184,9 +1080,9 @@ static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
 }
 
 
-// -------------------- Funções do eletroímã --------------------
+// -------------------- Funcoes do eletroima --------------------
 
-// Inicializa o eletroímã
+// Inicializa o eletroima
 static void inicializa_eletroima(void)
 {
     gpio_init(ELECTROMAGNET_PIN);
@@ -1196,7 +1092,7 @@ static void inicializa_eletroima(void)
     printf("Eletroima inicializado no pino %d\n", ELECTROMAGNET_PIN);
 }
 
-// Ativa o eletroímã
+// Ativa o eletroima
 static void ativar_eletroima(void)
 {
     gpio_put(ELECTROMAGNET_PIN, 1);
@@ -1204,7 +1100,7 @@ static void ativar_eletroima(void)
     printf("Eletroima ativado\n");
 }
 
-// Desativa o eletroímã
+// Desativa o eletroima
 static void desativar_eletroima(void)
 {
     gpio_put(ELECTROMAGNET_PIN, 0);
@@ -1212,7 +1108,7 @@ static void desativar_eletroima(void)
     printf("Eletroima desativado\n");
 }
 
-// Alterna o estado do eletroímã
+// Alterna o estado do eletroima
 static void toggle_eletroima(void)
 {
     if (electromagnet_active) {
@@ -1222,7 +1118,7 @@ static void toggle_eletroima(void)
     }
 }
 
-// -------------------- Funções de log --------------------
+// -------------------- Funcoes de log --------------------
 
 // Adiciona uma nova linha ao log
 static void log_push(const char *fmt, ...)
@@ -1245,9 +1141,9 @@ static const char *log_get(int idx)
     return g_log[i];
 }
 
-// -------------------- Funções do display LCD I2C --------------------
+// -------------------- Funcoes do display LCD I2C --------------------
 
-// Função para atualizar uma linha do display LCD com formatação
+// Funcao para atualizar uma linha do display LCD com formatacao
 void lcd_update_line(int line, const char *fmt, ...) {
     if (g_lcd_mutex == NULL) return; // Mutex nao foi criado
 
