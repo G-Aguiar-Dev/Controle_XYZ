@@ -6,6 +6,7 @@
 #include "hardware/i2c.h"       // Biblioteca de I2C
 #include "hardware/clocks.h"    // Biblioteca de clocks
 #include "hardware/spi.h"       // Biblioteca de SPI
+#include "hardware/dma.h"       // Biblioteca de DMA
 
 #include "pico/cyw43_arch.h"    // Biblioteca para arquitetura Wi-Fi da Pico com CYW43
 #include "lwip/tcp.h"           // Biblioteca de LWIP para manipulacao de TCP/IP
@@ -147,6 +148,23 @@ bool electromagnet_active = false;
 
 MFRC522Ptr_t g_mfrc; // Ponteiro global para a instancia do MFRC522
 
+// ===== VARIAVEIS PARA DMA DOS SENSORES DE FIM DE CURSO =====
+#define DMA_CHANNEL_ENDSTOP_X 0
+#define DMA_CHANNEL_ENDSTOP_Y 1
+#define DMA_CHANNEL_ENDSTOP_Z 2
+#define ENDSTOP_BUFFER_SIZE 1024
+
+volatile bool endstop_x_triggered = false;  // Flag para fim de curso X
+volatile bool endstop_y_triggered = false;  // Flag para fim de curso Y
+volatile bool endstop_z_triggered = false;  // Flag para fim de curso Z
+
+volatile bool movement_stopped = false;     // Flag de parada de emergencia
+
+// Buffers para DMA dos endstops (leitura repetida de GPIO)
+static volatile uint32_t endstop_buffer_x[ENDSTOP_BUFFER_SIZE];
+static volatile uint32_t endstop_buffer_y[ENDSTOP_BUFFER_SIZE];
+static volatile uint32_t endstop_buffer_z[ENDSTOP_BUFFER_SIZE];
+
 #define UID_STRLEN 32                           // Espaco para UID (ex: "12 34 56 78 ")
 static char g_cell_uids[6][UID_STRLEN];         // Armazena a UID de qual pallet esta em qual slot
 static SemaphoreHandle_t g_inventory_mutex;     // Protege g_cell_uids
@@ -205,6 +223,12 @@ static bool validate_token(const char *token);
 
 // Extrair token do header Authorization
 static bool extract_token(const char *req, char *token_out, size_t out_len);
+
+// ===== DECLARACOES DE FUNCOES DMA DOS ENDSTOPS =====
+static void init_dma_endstops(void);
+static void gpio_endstop_callback(uint gpio, uint32_t events);
+static bool check_endstop_triggered(void);
+static void reset_endstop_flags(void);
 
 //----------------------------------------TASKS----------------------------------------
 
@@ -854,6 +878,9 @@ static void init_cnc_pins(void) {
     gpio_pull_up(ENDSTOP_PIN_Z);
     
     printf("Pinos da CNC inicializados.\n");
+    
+    // Inicializa DMA para monitoramento dos endstops
+    init_dma_endstops();
 }
 
 // Gera um unico pulso de passo
@@ -864,6 +891,59 @@ static void step_motor(uint step_pin, uint dir_pin, bool direction, uint delay_u
     sleep_us(5); // Duracao minima do pulso
     gpio_put(step_pin, 0);
     sleep_us(delay_us); // <-- Usa o delay passado como argumento
+}
+
+// ===== FUNCOES DMA PARA SENSORES DE FIM DE CURSO =====
+
+// Inicializa DMA para monitoramento dos sensores de fim de curso
+static void init_dma_endstops(void) {
+    printf("Inicializando DMA para sensores de fim de curso...\n");
+    
+    // Habilita as interrupcoes GPIO para os endstops (edge falling - acionamento)
+    gpio_set_irq_enabled(ENDSTOP_PIN_X, GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(ENDSTOP_PIN_Y, GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(ENDSTOP_PIN_Z, GPIO_IRQ_EDGE_FALL, true);
+    
+    // Registra callback para interrupcoes GPIO
+    gpio_set_irq_enabled_with_callback(ENDSTOP_PIN_X, GPIO_IRQ_EDGE_FALL, true, &gpio_endstop_callback);
+    gpio_set_irq_enabled_with_callback(ENDSTOP_PIN_Y, GPIO_IRQ_EDGE_FALL, true, &gpio_endstop_callback);
+    gpio_set_irq_enabled_with_callback(ENDSTOP_PIN_Z, GPIO_IRQ_EDGE_FALL, true, &gpio_endstop_callback);\n\n    printf("DMA dos endstops inicializado. Monitorando pinos de fim de curso...\\n");
+    log_push("DMA: Sensores de fim de curso inicializados e monitorados");
+}
+
+// Callback para interrupcoes dos sensores de fim de curso
+static void gpio_endstop_callback(uint gpio, uint32_t events) {
+    if (gpio == ENDSTOP_PIN_X && (events & GPIO_IRQ_EDGE_FALL)) {
+        endstop_x_triggered = true;
+        movement_stopped = true;
+        printf("*** ENDSTOP X ACIONADO! ***\n");
+        log_push("ALERTA: ENDSTOP X acionado - Parando movimento");
+    }
+    else if (gpio == ENDSTOP_PIN_Y && (events & GPIO_IRQ_EDGE_FALL)) {
+        endstop_y_triggered = true;
+        movement_stopped = true;
+        printf("*** ENDSTOP Y ACIONADO! ***\n");
+        log_push("ALERTA: ENDSTOP Y acionado - Parando movimento");
+    }
+    else if (gpio == ENDSTOP_PIN_Z && (events & GPIO_IRQ_EDGE_FALL)) {
+        endstop_z_triggered = true;
+        movement_stopped = true;
+        printf("*** ENDSTOP Z ACIONADO! ***\n");
+        log_push("ALERTA: ENDSTOP Z acionado - Parando movimento");
+    }
+}
+
+// Verifica se algum endstop foi acionado
+static bool check_endstop_triggered(void) {
+    return (endstop_x_triggered || endstop_y_triggered || endstop_z_triggered);
+}
+
+// Reseta as flags de endstop
+static void reset_endstop_flags(void) {
+    endstop_x_triggered = false;
+    endstop_y_triggered = false;
+    endstop_z_triggered = false;
+    movement_stopped = false;
 }
 
 // Rotina de Homing (Zera a maquina)
@@ -918,6 +998,13 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
 
     // --- Loop de movimento intercalado ---
     for (long i = 0; i < max_steps; i++) {
+        // Verifica se algum endstop foi acionado (DMA monitoring)
+        if (check_endstop_triggered()) {
+            printf("Movimento interrompido por endstop!\n");
+            log_push("CNC: Movimento interrompido por sensor de fim de curso");
+            break; // Interrompe o loop
+        }
+        
         if (i < steps_x) {
             // Passa o delay de XY
             step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
@@ -942,7 +1029,9 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
     // Atualiza os ultimos alvos de X/Y 
     g_last_target_steps_x = target_x_steps;
     g_last_target_steps_y = target_y_steps;
-}
+    
+    // Reseta as flags de endstop apos movimento completado
+    reset_endstop_flags();
 
 // Executa a sequencia completa para pegar ou soltar um pallet
 static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
