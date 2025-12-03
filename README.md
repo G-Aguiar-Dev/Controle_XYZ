@@ -19,6 +19,7 @@ O sistema funciona com **FreeRTOS** para multitarefa em tempo real e oferece um 
 ## ✨ Recursos Principais
 
 - ✅ **Automação CNC 3D**: Movimento preciso em 3 eixos (X, Y, Z) com 6 posições de armazenamento
+- ✅ **Arquitetura Dual-Core**: Core 0 dedicado ao controle de hardware e Core 1 dedicado à rede (Wi-Fi/HTTP)
 - ✅ **Identificação RFID**: Leitura automática de UIDs dos pallets (MFRC522)
 - ✅ **Eletroímã Inteligente**: Pegar e soltar pallets automaticamente
 - ✅ **Interface Web Responsiva**: Painel de controle moderno com real-time updates
@@ -26,6 +27,7 @@ O sistema funciona com **FreeRTOS** para multitarefa em tempo real e oferece um 
 - ✅ **Display LCD**: Feedback visual no display 16x2 com I2C
 - ✅ **Wi-Fi Integrado**: Servidor HTTP nativo no Pico W
 - ✅ **Backend Python**: Gerenciamento de banco de dados SQLite
+- ✅ **Segurança e Autenticação**: Sistema de Login com tokens JWT e proteção de rotas
 - ✅ **Sistema de Log Circular**: Histórico de operações em memória
 - ✅ **Thread-Safe**: Proteção com mutexes para operações críticas
 
