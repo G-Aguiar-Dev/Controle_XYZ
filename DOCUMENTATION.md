@@ -27,6 +27,7 @@ Documentação completa das funções, variáveis globais e arquitetura do siste
 - **Manipulador**: Eletroímã para pegar/soltar pallets
 - **Display**: LCD 16x2 com I2C
 - **Conectividade**: Wi-Fi integrada, Servidor HTTP
+- **Arquitetura de processamento**: Core 0 para controle do hardware, Core 1 para configuração e polling da rede
 
 ### Software
 - **SO**: FreeRTOS em tempo real
@@ -138,6 +139,17 @@ UID_STRLEN = 32         // Tamanho da string UID
 ## 🚀 API de Funções
 
 ### Funções de Inicialização
+
+#### `core1_polling()`
+**Propósito**: Inicia o Wi-Fi e HTTP pelo Core 1 
+
+**Retorno**: `void`  
+**Detalhes**:
+- Chama outras funções, como `cyw43_arch_init()` e `start_http_server()`
+- Mantém o Wi-Fi ativo
+- Garante que interrupções de rede não parem o motor de passo no Core 0
+
+---
 
 #### `init_cnc_pins()`
 **Propósito**: Inicializa todos os pinos GPIO dos motores e sensores  
@@ -415,33 +427,7 @@ if (query_param(req, "slot", slot, sizeof(slot))) {
 
 ---
 
-### Funções de Controle de Endstops
-
-#### `check_endstop(uint pin)`
-**Propósito**: Verifica se endstop está acionado  
-**Parâmetros**: `pin` - GPIO do endstop  
-**Retorno**: `true` se acionado, `false` caso contrário
-
----
-
-#### Helpers para Endstops
-- `check_endstop_x_min()` / `check_endstop_x_max()`
-- `check_endstop_y_min()` / `check_endstop_y_max()`
-- `check_endstop_z_min()` / `check_endstop_z_max()`
-
----
-
 ## 📋 Tasks do FreeRTOS
-
-### `vPollingTask`
-**Prioridade**: 1 (baixa)  
-**Pilha**: 512 bytes  
-**Função**:
-- Executa `cyw43_arch_poll()` a cada 1 segundo
-- Mantém conexão Wi-Fi ativa
-- Loop infinito
-
----
 
 ### `vMotorControlTask`
 **Prioridade**: 3 (alta)  
@@ -530,11 +516,20 @@ O servidor Python gerencia o banco de dados SQLite com inventário e logs.
 | `/api/status` | GET | Status do servidor |
 | `/api/clear` | DELETE | Limpa todos os logs |
 
+### Endpoints de Autenticação
+| Rota | Método | Descrição |
+|------|--------|-----------|
+| `/api/auth/login` | POST | Troca credenciais por Token JWT
+| `/api/auth/register` | POST | Cria novo usuário
+| `/api/auth/me` | GET | Retorna dados do usuário logado
+| `/api/auth/logout` | POST | Invalida a sessão atual
+
 ---
 
 ## 🎨 Interface Web
 
 A interface web (`Index.html`) fornece:
+- **Autenticação**: Página de login
 - **Visualização do Layout**: Grid com 6 células (A1-C2)
 - **Operações de Armazenagem**: Botão para ativar modo "guardar"
 - **Operações Manuais**: Controle do eletroímã
@@ -546,6 +541,7 @@ A interface web (`Index.html`) fornece:
 - Atualização dinâmica do visual das células
 - Log local com timestamp
 - Comunicação em tempo real com servidor
+- Comunicação com banco de dados para verificar usuário e senha
 
 ---
 
