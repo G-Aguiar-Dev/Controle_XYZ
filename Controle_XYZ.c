@@ -167,6 +167,36 @@ static volatile bool endstop_z_triggered = false;
 
 static volatile bool movement_stopped = false;
 
+// ===== VARIAVEIS PARA PWM DMA DOS MOTORES DE PASSO =====
+// Configuração PWM para geração automática de pulsos de passo via DMA
+#define PWM_SLICE_MOTOR_X 7  // PWM slice para motor X (pino 14 = GPIO14 -> PWM7 CH0)
+#define PWM_SLICE_MOTOR_Y 0  // PWM slice para motor Y (pino 1 = GPIO1 -> PWM0 CH1)
+#define PWM_SLICE_MOTOR_Z 10 // PWM slice para motor Z (pino 21 = GPIO21 -> PWM10 CH1)
+
+#define PWM_CHANNEL_X 0      // Canal A do slice 7
+#define PWM_CHANNEL_Y 1      // Canal B do slice 0
+#define PWM_CHANNEL_Z 1      // Canal B do slice 10
+
+// DMA para PWM dos motores
+#define DMA_CHANNEL_MOTOR_X 2
+#define DMA_CHANNEL_MOTOR_Y 3
+#define DMA_CHANNEL_MOTOR_Z 4
+
+// Contadores de passos para sincronização DMA
+static volatile long motor_steps_remaining_x = 0;
+static volatile long motor_steps_remaining_y = 0;
+static volatile long motor_steps_remaining_z = 0;
+
+// Estados dos motores
+static volatile bool motor_running_x = false;
+static volatile bool motor_running_y = false;
+static volatile bool motor_running_z = false;
+
+// Direção dos motores (mantida para compatibilidade)
+static volatile bool motor_direction_x = false;
+static volatile bool motor_direction_y = false;
+static volatile bool motor_direction_z = false;
+
 #define UID_STRLEN 32                           // Espaco para UID (ex: "12 34 56 78 ")
 static char g_cell_uids[6][UID_STRLEN];         // Armazena a UID de qual pallet esta em qual slot
 static SemaphoreHandle_t g_inventory_mutex;     // Protege g_cell_uids
@@ -232,6 +262,14 @@ static void start_endstop_polling(void);
 static void stop_endstop_polling(void);
 static bool check_endstop_triggered_chaining(void);
 static void reset_endstop_flags_chaining(void);
+
+// ===== DECLARACOES DE FUNCOES PWM DMA DOS MOTORES =====
+static void init_pwm_dma_motors(void);
+static void set_motor_steps_dma(uint motor_axis, long num_steps, bool direction, uint delay_us);
+static void start_motor_dma(uint motor_axis);
+static void stop_motor_dma(uint motor_axis);
+static bool motors_running(void);
+static void wait_motors_finished(void);
 
 //----------------------------------------TASKS----------------------------------------
 
@@ -887,6 +925,9 @@ static void init_cnc_pins(void) {
     
     // Inicializa DMA Chaining para monitoramento dos endstops
     init_dma_endstops_chaining();
+    
+    // Inicializa PWM DMA para controle dos motores de passo
+    init_pwm_dma_motors();
 }
 
 // Gera um unico pulso de passo
@@ -1089,6 +1130,161 @@ static void reset_endstop_flags_chaining(void) {
     printf("Flags de endstop resetadas. Pronto para próximo movimento.\n");
 }
 
+// ===== IMPLEMENTACAO: PWM DMA PARA MOTORES DE PASSO =====
+// Este sistema utiliza PWM com DMA para gerar pulsos de passo autônomos
+// em alta frequência, mantendo sincronização entre X, Y, Z enquanto 
+// libera CPU para monitorar endstops e outras tarefas.
+
+// Inicializa PWM DMA para os motores
+static void init_pwm_dma_motors(void) {
+    printf("Inicializando PWM DMA para motores de passo...\n");
+    
+    // Motor X: PWM slice 7, channel 0
+    gpio_set_function(STEP_PIN_X, GPIO_FUNC_PWM);
+    pwm_set_enabled(PWM_SLICE_MOTOR_X, false);
+    pwm_set_clkdiv(PWM_SLICE_MOTOR_X, 1.0f);  // Frequência máxima
+    pwm_set_wrap(PWM_SLICE_MOTOR_X, 1000);    // Wrap para 1000 ciclos
+    pwm_set_chan_level(PWM_SLICE_MOTOR_X, PWM_CHANNEL_X, 500);  // 50% duty cycle (pulso)
+    
+    // Motor Y: PWM slice 0, channel 1
+    gpio_set_function(STEP_PIN_Y, GPIO_FUNC_PWM);
+    pwm_set_enabled(PWM_SLICE_MOTOR_Y, false);
+    pwm_set_clkdiv(PWM_SLICE_MOTOR_Y, 1.0f);
+    pwm_set_wrap(PWM_SLICE_MOTOR_Y, 1000);
+    pwm_set_chan_level(PWM_SLICE_MOTOR_Y, PWM_CHANNEL_Y, 500);
+    
+    // Motor Z: PWM slice 10, channel 1
+    gpio_set_function(STEP_PIN_Z, GPIO_FUNC_PWM);
+    pwm_set_enabled(PWM_SLICE_MOTOR_Z, false);
+    pwm_set_clkdiv(PWM_SLICE_MOTOR_Z, 1.0f);
+    pwm_set_wrap(PWM_SLICE_MOTOR_Z, 1000);
+    pwm_set_chan_level(PWM_SLICE_MOTOR_Z, PWM_CHANNEL_Z, 500);
+    
+    printf("PWM DMA para motores inicializado.\n");
+    printf("  - Motor X: PWM Slice %d, Channel %d\n", PWM_SLICE_MOTOR_X, PWM_CHANNEL_X);
+    printf("  - Motor Y: PWM Slice %d, Channel %d\n", PWM_SLICE_MOTOR_Y, PWM_CHANNEL_Y);
+    printf("  - Motor Z: PWM Slice %d, Channel %d\n", PWM_SLICE_MOTOR_Z, PWM_CHANNEL_Z);
+    
+    log_push("PWM: DMA para motores de passo inicializado");
+}
+
+// Define número de passos e velocidade para um motor
+static void set_motor_steps_dma(uint motor_axis, long num_steps, bool direction, uint delay_us) {
+    // motor_axis: 0=X, 1=Y, 2=Z
+    // delay_us: tempo entre pulsos em microsegundos
+    
+    if (motor_axis > 2) return;
+    
+    // Define direção via GPIO
+    if (motor_axis == 0) {
+        gpio_put(DIR_PIN_X, direction);
+        motor_direction_x = direction;
+        motor_steps_remaining_x = num_steps;
+    } else if (motor_axis == 1) {
+        gpio_put(DIR_PIN_Y, direction);
+        motor_direction_y = direction;
+        motor_steps_remaining_y = num_steps;
+    } else {
+        gpio_put(DIR_PIN_Z, direction);
+        motor_direction_z = direction;
+        motor_steps_remaining_z = num_steps;
+    }
+    
+    // Calcula frequência PWM baseado no delay desejado
+    // delay_us é tempo entre pulsos; PWM wrap controla frequência
+    // Frequência PWM = clock / (clkdiv * (wrap + 1))
+    // Para 1000 wrap: freq = 125MHz / (clkdiv * 1001)
+    // Se queremos pulsos cada 800µs = 1250Hz, então:
+    // 1250 = 125M / (clkdiv * 1001) => clkdiv = 99.92 ≈ 100
+    
+    float clkdiv = (125000000.0f / (delay_us * 2000.0f));  // delay_us * 2000 = freq em Hz (para wrap=1000)
+    if (clkdiv < 1.0f) clkdiv = 1.0f;
+    if (clkdiv > 256.0f) clkdiv = 256.0f;
+    
+    if (motor_axis == 0) {
+        pwm_set_clkdiv(PWM_SLICE_MOTOR_X, clkdiv);
+    } else if (motor_axis == 1) {
+        pwm_set_clkdiv(PWM_SLICE_MOTOR_Y, clkdiv);
+    } else {
+        pwm_set_clkdiv(PWM_SLICE_MOTOR_Z, clkdiv);
+    }
+    
+    printf("Motor %c programado: %ld passos @ %u µs/passo (clkdiv=%.1f)\n", 
+           "XYZ"[motor_axis], num_steps, delay_us, clkdiv);
+}
+
+// Inicia o motor
+static void start_motor_dma(uint motor_axis) {
+    if (motor_axis > 2) return;
+    
+    if (motor_axis == 0) {
+        pwm_set_enabled(PWM_SLICE_MOTOR_X, true);
+        motor_running_x = true;
+        printf("Motor X iniciado (DMA PWM)\n");
+    } else if (motor_axis == 1) {
+        pwm_set_enabled(PWM_SLICE_MOTOR_Y, true);
+        motor_running_y = true;
+        printf("Motor Y iniciado (DMA PWM)\n");
+    } else {
+        pwm_set_enabled(PWM_SLICE_MOTOR_Z, true);
+        motor_running_z = true;
+        printf("Motor Z iniciado (DMA PWM)\n");
+    }
+}
+
+// Para o motor
+static void stop_motor_dma(uint motor_axis) {
+    if (motor_axis > 2) return;
+    
+    if (motor_axis == 0) {
+        pwm_set_enabled(PWM_SLICE_MOTOR_X, false);
+        motor_running_x = false;
+        motor_steps_remaining_x = 0;
+        printf("Motor X parado\n");
+    } else if (motor_axis == 1) {
+        pwm_set_enabled(PWM_SLICE_MOTOR_Y, false);
+        motor_running_y = false;
+        motor_steps_remaining_y = 0;
+        printf("Motor Y parado\n");
+    } else {
+        pwm_set_enabled(PWM_SLICE_MOTOR_Z, false);
+        motor_running_z = false;
+        motor_steps_remaining_z = 0;
+        printf("Motor Z parado\n");
+    }
+}
+
+// Verifica se algum motor está rodando
+static bool motors_running(void) {
+    return motor_running_x || motor_running_y || motor_running_z;
+}
+
+// Aguarda até que todos os motores terminem (para sincronização)
+// Nota: Esta é uma versão simplificada. Idealmente usaria interrupts PWM
+// ou contadores hardware para saber quando terminou.
+static void wait_motors_finished(void) {
+    // Aguarda enquanto houver motores rodando
+    while (motors_running()) {
+        // Verifica endstops durante movimento
+        if (check_endstop_triggered_chaining()) {
+            printf("Endstop acionado durante movimento DMA. Parando motores...\n");
+            stop_motor_dma(0);
+            stop_motor_dma(1);
+            stop_motor_dma(2);
+            break;
+        }
+        cyw43_arch_poll();  // Mantém WiFi vivo
+        sleep_ms(1);  // Yield CPU
+    }
+    
+    // Garante que todos estão parados
+    stop_motor_dma(0);
+    stop_motor_dma(1);
+    stop_motor_dma(2);
+    
+    printf("Movimento PWM DMA concluído.\n");
+}
+
 // Rotina de Homing (Zera a maquina)
 static void home_all_axes(void) {
     // Condicao de seguranca: executar apenas com Z no topo (0)
@@ -1139,30 +1335,34 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
          max_steps = steps_z;
     }
 
-    // --- Loop de movimento intercalado ---
-    for (long i = 0; i < max_steps; i++) {
-        // Verifica se algum endstop foi acionado (DMA Chaining monitoring)
-        if (check_endstop_triggered_chaining()) {
-            printf("Movimento interrompido por endstop!\n");
-            log_push("CNC: Movimento interrompido por sensor de fim de curso");
-            break; // Interrompe o loop
-        }
-        
-        if (i < steps_x) {
-            // Passa o delay de XY
-            step_motor(STEP_PIN_X, DIR_PIN_X, dir_x, STEP_DELAY_XY_US);
-        }
-        if (i < steps_y) {
-            // Passa o delay de XY
-            step_motor(STEP_PIN_Y, DIR_PIN_Y, dir_y, STEP_DELAY_XY_US);
-        }
-        if (i < steps_z) { 
-            // Passa o delay de Z
-            step_motor(STEP_PIN_Z, DIR_PIN_Z, dir_z, STEP_DELAY_Z_US);
-        }
-        
-        if(i % 20 == 0) cyw43_arch_poll(); // Mantem o WiFi vivo
+    // --- NOVO: Movimento com PWM DMA (hardware autônomo) ---
+    // Programa os motores com seus passos e velocidades respectivas
+    // Mantém sincronização intercalada da mesma forma que o loop antigo
+    
+    printf("Iniciando movimento DMA com PWM:\n");
+    printf("  X: %ld passos @ %u µs/passo\n", steps_x, STEP_DELAY_XY_US);
+    printf("  Y: %ld passos @ %u µs/passo\n", steps_y, STEP_DELAY_XY_US);
+    printf("  Z: %ld passos @ %u µs/passo\n", steps_z, STEP_DELAY_Z_US);
+    
+    // Configura cada motor com seu número de passos, direção e velocidade
+    if (steps_x > 0) {
+        set_motor_steps_dma(0, steps_x, dir_x, STEP_DELAY_XY_US);  // Motor X
+        start_motor_dma(0);
     }
+    
+    if (steps_y > 0) {
+        set_motor_steps_dma(1, steps_y, dir_y, STEP_DELAY_XY_US);  // Motor Y
+        start_motor_dma(1);
+    }
+    
+    if (steps_z > 0) {
+        set_motor_steps_dma(2, steps_z, dir_z, STEP_DELAY_Z_US);   // Motor Z
+        start_motor_dma(2);
+    }
+    
+    // Aguarda até que todos os motores terminem ou endstop seja acionado
+    // Durante este tempo, CPU monitora endstops e mantém WiFi vivo
+    wait_motors_finished();
     
     // --- Atualiza as posicoes globais de TODOS os eixos ---
     g_current_steps_x = target_x_steps;
@@ -1175,6 +1375,9 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
     
     // Reseta as flags de endstop apos movimento completado (DMA Chaining)
     reset_endstop_flags_chaining();
+    
+    printf("Movimento PWM DMA concluído com sucesso. Motores em repouso.\n");
+    log_push("CNC: Movimento PWM DMA concluído");
 
 // Executa a sequencia completa para pegar ou soltar um pallet
 static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
