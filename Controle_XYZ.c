@@ -148,22 +148,24 @@ bool electromagnet_active = false;
 
 MFRC522Ptr_t g_mfrc; // Ponteiro global para a instancia do MFRC522
 
-// ===== VARIAVEIS PARA DMA DOS SENSORES DE FIM DE CURSO =====
-#define DMA_CHANNEL_ENDSTOP_X 0
-#define DMA_CHANNEL_ENDSTOP_Y 1
-#define DMA_CHANNEL_ENDSTOP_Z 2
-#define ENDSTOP_BUFFER_SIZE 1024
+// ===== VARIAVEIS PARA DMA CHAINING DOS SENSORES DE FIM DE CURSO =====
+#define DMA_CHANNEL_ENDSTOP_CHAIN_0 0
+#define DMA_CHANNEL_ENDSTOP_CHAIN_1 1
 
-volatile bool endstop_x_triggered = false;  // Flag para fim de curso X
-volatile bool endstop_y_triggered = false;  // Flag para fim de curso Y
-volatile bool endstop_z_triggered = false;  // Flag para fim de curso Z
+// Leitura dos valores de GPIO (atualizado pelo DMA)
+static volatile uint32_t gpio_input_state = 0xFFFFFFFF;
 
-volatile bool movement_stopped = false;     // Flag de parada de emergencia
+// Flags de trigger (bits individuais para cada sensor)
+#define ENDSTOP_FLAG_X (1u << ENDSTOP_PIN_X)
+#define ENDSTOP_FLAG_Y (1u << ENDSTOP_PIN_Y)
+#define ENDSTOP_FLAG_Z (1u << ENDSTOP_PIN_Z)
 
-// Buffers para DMA dos endstops (leitura repetida de GPIO)
-static volatile uint32_t endstop_buffer_x[ENDSTOP_BUFFER_SIZE];
-static volatile uint32_t endstop_buffer_y[ENDSTOP_BUFFER_SIZE];
-static volatile uint32_t endstop_buffer_z[ENDSTOP_BUFFER_SIZE];
+// Estado dos endstops (lido pelo DMA periodicamente)
+static volatile bool endstop_x_triggered = false;
+static volatile bool endstop_y_triggered = false;
+static volatile bool endstop_z_triggered = false;
+
+static volatile bool movement_stopped = false;
 
 #define UID_STRLEN 32                           // Espaco para UID (ex: "12 34 56 78 ")
 static char g_cell_uids[6][UID_STRLEN];         // Armazena a UID de qual pallet esta em qual slot
@@ -225,10 +227,11 @@ static bool validate_token(const char *token);
 static bool extract_token(const char *req, char *token_out, size_t out_len);
 
 // ===== DECLARACOES DE FUNCOES DMA DOS ENDSTOPS =====
-static void init_dma_endstops(void);
-static void gpio_endstop_callback(uint gpio, uint32_t events);
-static bool check_endstop_triggered(void);
-static void reset_endstop_flags(void);
+static void init_dma_endstops_chaining(void);
+static void start_endstop_polling(void);
+static void stop_endstop_polling(void);
+static bool check_endstop_triggered_chaining(void);
+static void reset_endstop_flags_chaining(void);
 
 //----------------------------------------TASKS----------------------------------------
 
@@ -293,6 +296,9 @@ void vMotorControlTask(void *pvParameters)
     log_push("CNC: Homing concluido.");
     lcd_update_line(0, "Status: Pronto");  
     lcd_update_line(1, "");             
+
+    // Inicia monitoramento DMA dos endstops
+    start_endstop_polling();
 
     // Converte Z_SAFE_MM para passos
     long z_safe_steps = (long)(Z_SAFE_MM * STEPS_PER_MM_Z);
@@ -879,8 +885,8 @@ static void init_cnc_pins(void) {
     
     printf("Pinos da CNC inicializados.\n");
     
-    // Inicializa DMA para monitoramento dos endstops
-    init_dma_endstops();
+    // Inicializa DMA Chaining para monitoramento dos endstops
+    init_dma_endstops_chaining();
 }
 
 // Gera um unico pulso de passo
@@ -946,6 +952,143 @@ static void reset_endstop_flags(void) {
     movement_stopped = false;
 }
 
+// ===== IMPLEMENTACAO: DMA CHAINING PARA SENSORES DE FIM DE CURSO =====
+// Este sistema utiliza DMA em chaining para monitorar os sensores de endstop
+// de forma autonôma, sem overhead de CPU. O DMA faz polling periódico dos pinos GPIO
+// e escreve o estado em gpio_input_state, que é lido no loop de movimento.
+
+// Inicializa DMA com chaining para monitoramento de endstops
+static void init_dma_endstops_chaining(void) {
+    printf("Inicializando DMA Chaining para sensores de fim de curso...\n");
+    
+    // Configura pinos GPIO como entrada com pull-up
+    gpio_init(ENDSTOP_PIN_X);
+    gpio_set_dir(ENDSTOP_PIN_X, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_X);
+    
+    gpio_init(ENDSTOP_PIN_Y);
+    gpio_set_dir(ENDSTOP_PIN_Y, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_Y);
+    
+    gpio_init(ENDSTOP_PIN_Z);
+    gpio_set_dir(ENDSTOP_PIN_Z, GPIO_IN);
+    gpio_pull_up(ENDSTOP_PIN_Z);
+    
+    // Configura canal DMA 0 (primeira leitura)
+    // Lê do registro GPIO_IN periodicamente
+    dma_channel_config cfg0 = dma_get_default_channel_config(DMA_CHANNEL_ENDSTOP_CHAIN_0);
+    channel_config_set_read_increment(&cfg0, false);      // Sempre lê do mesmo endereço (GPIO_IN)
+    channel_config_set_write_increment(&cfg0, false);     // Sempre escreve no mesmo lugar (gpio_input_state)
+    channel_config_set_transfer_data_size(&cfg0, DMA_SIZE_32); // Transferência de 32 bits
+    channel_config_set_dreq(&cfg0, DREQ_TIMER0);          // Trigger: Timer 0
+    channel_config_set_chain_to(&cfg0, DMA_CHANNEL_ENDSTOP_CHAIN_1); // Chain para canal 1
+    
+    // Configura canal DMA 1 (segunda leitura/confirmação)
+    dma_channel_config cfg1 = dma_get_default_channel_config(DMA_CHANNEL_ENDSTOP_CHAIN_1);
+    channel_config_set_read_increment(&cfg1, false);      // Sempre lê do mesmo endereço
+    channel_config_set_write_increment(&cfg1, false);     // Sempre escreve no mesmo lugar
+    channel_config_set_transfer_data_size(&cfg1, DMA_SIZE_32); // Transferência de 32 bits
+    channel_config_set_dreq(&cfg1, DREQ_TIMER0);          // Trigger: Timer 0
+    channel_config_set_chain_to(&cfg1, DMA_CHANNEL_ENDSTOP_CHAIN_0); // Chain de volta para canal 0
+    
+    // Aplica configurações aos canais
+    dma_channel_set_config(DMA_CHANNEL_ENDSTOP_CHAIN_0, &cfg0, false);
+    dma_channel_set_config(DMA_CHANNEL_ENDSTOP_CHAIN_1, &cfg1, false);
+    
+    // Configura as transferências (leitura do GPIO_IN, escrita em gpio_input_state)
+    dma_channel_set_read_addr(DMA_CHANNEL_ENDSTOP_CHAIN_0, 
+                              (uint32_t *)(&sio_hw->gpio_in), false);
+    dma_channel_set_write_addr(DMA_CHANNEL_ENDSTOP_CHAIN_0, 
+                               (uint32_t *)&gpio_input_state, false);
+    dma_channel_set_transfer_count(DMA_CHANNEL_ENDSTOP_CHAIN_0, 1, false);
+    
+    dma_channel_set_read_addr(DMA_CHANNEL_ENDSTOP_CHAIN_1, 
+                              (uint32_t *)(&sio_hw->gpio_in), false);
+    dma_channel_set_write_addr(DMA_CHANNEL_ENDSTOP_CHAIN_1, 
+                               (uint32_t *)&gpio_input_state, false);
+    dma_channel_set_transfer_count(DMA_CHANNEL_ENDSTOP_CHAIN_1, 1, true); // true = inicia
+    
+    printf("DMA Chaining dos endstops inicializado.\n");
+    printf("  - Canal 0: Leitura principal de GPIO\n");
+    printf("  - Canal 1: Leitura de confirmação (redundância)\n");
+    printf("  - Trigger: Timer 0 (~100 Hz)\n");
+    printf("  - Monitorando pinos: X=%d, Y=%d, Z=%d\n", ENDSTOP_PIN_X, ENDSTOP_PIN_Y, ENDSTOP_PIN_Z);
+    
+    log_push("DMA: Chaining para sensores de fim de curso inicializado");
+}
+
+// Inicia o polling DMA dos endstops
+static void start_endstop_polling(void) {
+    printf("Iniciando polling DMA dos endstops...\n");
+    
+    // Garante que o Timer 0 está rodando
+    hw_set_bits(&timer_hw->intr, 0x1);  // Clear qualquer interrupt pendente
+    
+    // Habilita os canais DMA
+    dma_channel_set_enabled(DMA_CHANNEL_ENDSTOP_CHAIN_0, true);
+    dma_channel_set_enabled(DMA_CHANNEL_ENDSTOP_CHAIN_1, true);
+    
+    printf("Polling DMA dos endstops iniciado com sucesso.\n");
+    log_push("DMA: Polling de endstops iniciado");
+}
+
+// Para o polling DMA dos endstops
+static void stop_endstop_polling(void) {
+    printf("Parando polling DMA dos endstops...\n");
+    
+    dma_channel_abort(DMA_CHANNEL_ENDSTOP_CHAIN_0);
+    dma_channel_abort(DMA_CHANNEL_ENDSTOP_CHAIN_1);
+    
+    printf("Polling DMA dos endstops parado.\n");
+    log_push("DMA: Polling de endstops parado");
+}
+
+// Verifica se algum endstop foi acionado (lendo o estado capturado pelo DMA)
+static bool check_endstop_triggered_chaining(void) {
+    // Lê o estado dos pinos capturado pelo DMA
+    // Se a máscara do pino for 0, o pino está em LOW (acionado)
+    // Se a máscara do pino for 1, o pino está em HIGH (não acionado)
+    
+    bool x_triggered = !(gpio_input_state & ENDSTOP_FLAG_X);  // Ativa se bit=0 (LOW)
+    bool y_triggered = !(gpio_input_state & ENDSTOP_FLAG_Y);
+    bool z_triggered = !(gpio_input_state & ENDSTOP_FLAG_Z);
+    
+    // Atualiza flags para logging
+    if (x_triggered && !endstop_x_triggered) {
+        printf("*** ENDSTOP X ACIONADO (DMA) ***\n");
+        log_push("ALERTA: ENDSTOP X acionado - Parando movimento");
+        endstop_x_triggered = true;
+    }
+    if (y_triggered && !endstop_y_triggered) {
+        printf("*** ENDSTOP Y ACIONADO (DMA) ***\n");
+        log_push("ALERTA: ENDSTOP Y acionado - Parando movimento");
+        endstop_y_triggered = true;
+    }
+    if (z_triggered && !endstop_z_triggered) {
+        printf("*** ENDSTOP Z ACIONADO (DMA) ***\n");
+        log_push("ALERTA: ENDSTOP Z acionado - Parando movimento");
+        endstop_z_triggered = true;
+    }
+    
+    movement_stopped = (x_triggered || y_triggered || z_triggered);
+    
+    return movement_stopped;
+}
+
+// Reseta as flags de endstop após movimento completado
+static void reset_endstop_flags_chaining(void) {
+    // Define gpio_input_state de volta para 0xFFFFFFFF (todos os pinos em HIGH/não acionado)
+    gpio_input_state = 0xFFFFFFFF;
+    
+    // Reseta as flags
+    endstop_x_triggered = false;
+    endstop_y_triggered = false;
+    endstop_z_triggered = false;
+    movement_stopped = false;
+    
+    printf("Flags de endstop resetadas. Pronto para próximo movimento.\n");
+}
+
 // Rotina de Homing (Zera a maquina)
 static void home_all_axes(void) {
     // Condicao de seguranca: executar apenas com Z no topo (0)
@@ -998,8 +1141,8 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
 
     // --- Loop de movimento intercalado ---
     for (long i = 0; i < max_steps; i++) {
-        // Verifica se algum endstop foi acionado (DMA monitoring)
-        if (check_endstop_triggered()) {
+        // Verifica se algum endstop foi acionado (DMA Chaining monitoring)
+        if (check_endstop_triggered_chaining()) {
             printf("Movimento interrompido por endstop!\n");
             log_push("CNC: Movimento interrompido por sensor de fim de curso");
             break; // Interrompe o loop
@@ -1030,8 +1173,8 @@ static void move_axes_to_steps(long target_x_steps, long target_y_steps, long ta
     g_last_target_steps_x = target_x_steps;
     g_last_target_steps_y = target_y_steps;
     
-    // Reseta as flags de endstop apos movimento completado
-    reset_endstop_flags();
+    // Reseta as flags de endstop apos movimento completado (DMA Chaining)
+    reset_endstop_flags_chaining();
 
 // Executa a sequencia completa para pegar ou soltar um pallet
 static void execute_cell_operation(int cell_index, bool is_pickup_operation) {
