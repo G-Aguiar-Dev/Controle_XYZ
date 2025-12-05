@@ -2057,6 +2057,54 @@
 		(color 0 0 0 0)
 		(uuid "ad959c79-c252-4757-b4b7-580d478966aa")
 	)
+	(no_connect
+		(at 222.25 31.75)
+		(uuid "1b409885-ee3c-479b-8485-75a4a20c32ed")
+	)
+	(no_connect
+		(at 250.19 82.55)
+		(uuid "223bf889-dee4-4ef8-8255-d5f49c93cf1d")
+	)
+	(no_connect
+		(at 204.47 46.99)
+		(uuid "2cbe0700-6c04-448a-9fc4-db7aa944205b")
+	)
+	(no_connect
+		(at 204.47 54.61)
+		(uuid "50070547-68da-4432-bd39-712ee2e52339")
+	)
+	(no_connect
+		(at 204.47 80.01)
+		(uuid "67004e1c-f3a5-409e-9304-eea349037947")
+	)
+	(no_connect
+		(at 204.47 87.63)
+		(uuid "753f74ca-b27e-4631-8add-6bd96a33750d")
+	)
+	(no_connect
+		(at 250.19 85.09)
+		(uuid "b127f9b8-b156-4076-a1e8-1909d7865eeb")
+	)
+	(no_connect
+		(at 250.19 87.63)
+		(uuid "b8a94f75-82d6-4e8e-a97d-03f4308f1b22")
+	)
+	(no_connect
+		(at 250.19 77.47)
+		(uuid "c1d55a0b-9a35-4bad-86ed-45a756a1d9b0")
+	)
+	(no_connect
+		(at 204.47 82.55)
+		(uuid "e220d40c-f0e9-48e9-ba40-cefdc4dac292")
+	)
+	(no_connect
+		(at 250.19 92.71)
+		(uuid "e3feec04-a849-409f-97c8-2b86ec3a66c4")
+	)
+	(no_connect
+		(at 204.47 64.77)
+		(uuid "fbc78ba5-a7f5-4d74-85c7-ff403509fb8e")
+	)
 	(wire
 		(pts
 			(xy 138.43 54.61) (xy 140.97 54.61)
@@ -3882,7 +3930,7 @@
 				)
 			)
 		)
-		(property "Footprint" "CUI_TB007-508-03BE"
+		(property "Footprint" "TerminalBlock_CUI:TerminalBlock_CUI_TB007-508-03_1x03_P5.08mm_Horizontal"
 			(at 35.56 110.49 0)
 			(effects
 				(font
@@ -3974,7 +4022,7 @@
 				)
 			)
 		)
-		(property "Footprint" "CUI_TB007-508-03BE"
+		(property "Footprint" "TerminalBlock_CUI:TerminalBlock_CUI_TB007-508-03_1x03_P5.08mm_Horizontal"
 			(at 35.56 25.4 0)
 			(effects
 				(font
@@ -4132,7 +4180,7 @@
 				)
 			)
 		)
-		(property "Footprint" "CUI_TB007-508-03BE"
+		(property "Footprint" "TerminalBlock_CUI:TerminalBlock_CUI_TB007-508-03_1x03_P5.08mm_Horizontal"
 			(at 35.56 78.74 0)
 			(effects
 				(font
@@ -4385,7 +4433,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "Buzzer_Beeper:Buzzer_12x9.5RM7.6"
 			(at 169.545 100.33 90)
 			(effects
 				(font
@@ -4794,7 +4842,7 @@
 				)
 			)
 		)
-		(property "Footprint" "CUI_TB007-508-03BE"
+		(property "Footprint" "TerminalBlock_CUI:TerminalBlock_CUI_TB007-508-03_1x03_P5.08mm_Horizontal"
 			(at 35.56 97.79 0)
 			(effects
 				(font
@@ -5044,7 +5092,7 @@
 				)
 			)
 		)
-		(property "Footprint" "CUI_TB007-508-03BE"
+		(property "Footprint" "TerminalBlock_CUI:TerminalBlock_CUI_TB007-508-03_1x03_P5.08mm_Horizontal"
 			(at 35.56 123.19 0)
 			(effects
 				(font
@@ -5137,7 +5185,7 @@
 				)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "level_shifter:CONV_BOB-12009_level_shifter"
 			(at 90.424 71.374 0)
 			(effects
 				(font
@@ -5355,7 +5403,7 @@
 				)
 			)
 		)
-		(property "Footprint" "CUI_TB007-508-03BE"
+		(property "Footprint" "TerminalBlock_CUI:TerminalBlock_CUI_TB007-508-03_1x03_P5.08mm_Horizontal"
 			(at 35.56 38.1 0)
 			(effects
 				(font
@@ -5447,7 +5495,7 @@
 				)
 			)
 		)
-		(property "Footprint" "CUI_TB007-508-03BE"
+		(property "Footprint" "TerminalBlock_CUI:TerminalBlock_CUI_TB007-508-03_1x03_P5.08mm_Horizontal"
 			(at 35.56 58.42 0)
 			(effects
 				(font
